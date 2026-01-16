@@ -26,7 +26,7 @@ WORKDIR /app
 # Install production dependencies only
 COPY package*.json ./
 RUN apk add --no-cache python3 make g++ && \
-    npm ci --production && \
+    npm install --omit=dev && \
     apk del python3 make g++
 
 # Copy built artifacts from builder
