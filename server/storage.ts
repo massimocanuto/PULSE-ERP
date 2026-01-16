@@ -1839,9 +1839,7 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async deleteSetting(key: string): Promise<void> {
-    await db.delete(appSettings).where(eq(appSettings.key, key));
-  }
+
 
   async isSetupComplete(): Promise<boolean> {
     const setting = await this.getSetting('setup_complete');
