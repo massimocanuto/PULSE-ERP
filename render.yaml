@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: pulse-erp
+    env: docker
+    plan: starter # Changed to starter because free tier doesn't support disks
+    region: frankfurt # data residency near Italy
+    branch: main
+    
+    # Environment Variables
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: file:/app/data/pulse.db
+      - key: SESSION_SECRET
+        generateValue: true # Generates a secure random secret
+
+    # Persistent Disk Configuration
+    disk:
+      name: pulse_data
+      mountPath: /app/data
+      sizeGB: 1

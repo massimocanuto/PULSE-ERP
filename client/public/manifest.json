@@ -1,0 +1,64 @@
+{
+    "name": "PULSE-ERP",
+    "short_name": "PULSE",
+    "description": "Sistema ERP avanzato per la gestione aziendale completa",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#0f172a",
+    "theme_color": "#3b82f6",
+    "categories": [
+        "business",
+        "productivity",
+        "finance"
+    ],
+    "icons": [
+        {
+            "src": "/favicon.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/favicon.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "/favicon.png",
+            "sizes": "1280x720",
+            "type": "image/png",
+            "label": "Dashboard PULSE ERP"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Dashboard",
+            "short_name": "Home",
+            "description": "Apri la dashboard principale",
+            "url": "/",
+            "icons": [
+                {
+                    "src": "/favicon.png",
+                    "sizes": "96x96"
+                }
+            ]
+        },
+        {
+            "name": "Clienti",
+            "short_name": "Clienti",
+            "description": "Gestione clienti e fornitori",
+            "url": "/customers",
+            "icons": [
+                {
+                    "src": "/favicon.png",
+                    "sizes": "96x96"
+                }
+            ]
+        }
+    ]
+}

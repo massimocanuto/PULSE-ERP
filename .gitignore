@@ -1,0 +1,36 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# Environment
+.env
+.env.*
+
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+data/*.db
+data/*.db-*
+
+# Desktop Build
+dist-desktop
+release
+*.exe
+
+# WhatsApp Session
+.wwebjs_auth/
+.wwebjs_cache/
+.wwebjs_auth_debug/
+
+# Uploads
+uploads/
+
+# Agent
+.agent/
+.replit
+.local/
