@@ -44,4 +44,4 @@ ENV DATABASE_URL=file:/app/data/pulse.db
 
 EXPOSE 5000
 
-CMD ["npm", "start"]
+CMD ["node", "dist/index.cjs"]
