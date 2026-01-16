@@ -4089,27 +4089,6 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async seedDefaultPermissions(): Promise<void> {
-    const modules = MODULES;
-    const roles = ROLES;
-
-    const existingPermissions = await this.getAllRolePermissions();
-    if (existingPermissions.length > 0) return;
-
-    for (const role of roles) {
-      for (const module of modules) {
-        const isAdmin = role === 'Admin';
-        const isManager = role === 'Manager';
-
-        await this.upsertRolePermission(role, module, {
-          canView: true,
-          canCreate: isAdmin || isManager,
-          canEdit: isAdmin || isManager,
-          canDelete: isAdmin
-        });
-      }
-    }
-  }
 
 
 
