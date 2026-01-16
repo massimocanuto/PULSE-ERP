@@ -4036,58 +4036,7 @@ export class DatabaseStorage implements IStorage {
     return rows.map(row => row.projects);
   }
 
-  // Role Permissions
-  async getRolePermissions(role: string): Promise<RolePermission[]> {
-    return await db.select().from(rolePermissions).where(eq(rolePermissions.role, role));
-  }
 
-  async getAllRolePermissions(): Promise<RolePermission[]> {
-    return await db.select().from(rolePermissions);
-  }
-
-  async updateRolePermission(role: string, module: string, permissions: Partial<Pick<RolePermission, 'canView' | 'canCreate' | 'canEdit' | 'canDelete'>>): Promise<RolePermission | undefined> {
-    const [existing] = await db.select().from(rolePermissions).where(and(eq(rolePermissions.role, role), eq(rolePermissions.module, module)));
-
-    if (existing) {
-      const [updated] = await db.update(rolePermissions)
-        .set(permissions)
-        .where(eq(rolePermissions.id, existing.id))
-        .returning();
-      return updated;
-    } else {
-      const [created] = await db.insert(rolePermissions).values({
-        id: randomUUID(),
-        role,
-        module,
-        canView: false,
-        canCreate: false,
-        canEdit: false,
-        canDelete: false,
-        ...permissions
-      }).returning();
-      return created;
-    }
-  }
-
-  async upsertRolePermission(role: string, module: string, permissions: Pick<RolePermission, 'canView' | 'canCreate' | 'canEdit' | 'canDelete'>): Promise<RolePermission> {
-    const [existing] = await db.select().from(rolePermissions).where(and(eq(rolePermissions.role, role), eq(rolePermissions.module, module)));
-
-    if (existing) {
-      const [updated] = await db.update(rolePermissions)
-        .set(permissions)
-        .where(eq(rolePermissions.id, existing.id))
-        .returning();
-      return updated;
-    } else {
-      const [created] = await db.insert(rolePermissions).values({
-        id: randomUUID(),
-        role,
-        module,
-        ...permissions
-      }).returning();
-      return created;
-    }
-  }
 
 
 
