@@ -2238,8 +2238,98 @@ export async function registerRoutes(
     res.json({ summary: "Riassunto automatico non disponibile." });
   });
 
+
+  // =====================
+  // USER EMAIL CONFIG API
+  // =====================
+
+  app.get("/api/user-email-config/:userId", async (req, res) => {
+    try {
+      const configs = await storage.getUserEmailConfigs(req.params.userId);
+      if (configs && configs.length > 0) {
+        res.json(configs[0]);
+      } else {
+        // Return 404 as expected by the frontend check "if (!res.ok) return null"
+        res.status(404).json({ message: "Configurazione non trovata" });
+      }
+    } catch (error) {
+      console.error("Error fetching email config:", error);
+      res.status(500).json({ error: "Errore nel recupero della configurazione" });
+    }
+  });
+
+  app.post("/api/user-email-config/:userId", async (req, res) => {
+    try {
+      // Ensure userId matches
+      const data = { ...req.body, userId: req.params.userId };
+      const configData = insertUserEmailConfigSchema.parse(data);
+
+      // Check if exists to avoid duplicates (though frontend logic separates POST/PUT)
+      const existing = await storage.getUserEmailConfigs(req.params.userId);
+      if (existing && existing.length > 0) {
+        return res.status(409).json({ error: "Configurazione già esistente. Usa PUT per aggiornare." });
+      }
+
+      const config = await storage.createUserEmailConfig(configData);
+      res.status(201).json(config);
+    } catch (error) {
+      console.error("Error creating email config:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Errore nel salvataggio della configurazione" });
+    }
+  });
+
+  app.put("/api/user-email-config/:userId", async (req, res) => {
+    try {
+      const configs = await storage.getUserEmailConfigs(req.params.userId);
+      if (!configs || configs.length === 0) {
+        return res.status(404).json({ error: "Configurazione non trovata" });
+      }
+
+      const configId = configs[0].id; // We assume 1 config per user for now
+      const configData = insertUserEmailConfigSchema.partial().parse(req.body);
+
+      const updated = await storage.updateUserEmailConfig(configId, configData);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating email config:", error);
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Errore nell'aggiornamento della configurazione" });
+    }
+  });
+
+  app.delete("/api/user-email-config/:userId", async (req, res) => {
+    try {
+      const configs = await storage.getUserEmailConfigs(req.params.userId);
+      if (!configs || configs.length === 0) {
+        return res.status(404).json({ error: "Configurazione non trovata" });
+      }
+
+      await storage.deleteUserEmailConfig(configs[0].id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting email config:", error);
+      res.status(500).json({ error: "Errore nella rimozione della configurazione" });
+    }
+  });
+
+  app.post("/api/email/test-connection", async (req, res) => {
+    try {
+      const result = await testEmailConnection(req.body);
+      res.json(result);
+    } catch (error) {
+      console.error("Error testing email connection:", error);
+      res.status(500).json({ success: false, message: "Errore interno durante il test" });
+    }
+  });
+
   // =====================
   // EMAILS API
+
   // =====================
   app.get("/api/emails", async (req: Request, res: Response) => {
     const userId = (req as any).session?.userId || req.headers["x-user-id"];
