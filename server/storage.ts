@@ -1078,26 +1078,6 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async createWhatsappContact(insertContact: InsertWhatsappContact): Promise<WhatsappContact> {
-    const result = await db.insert(whatsappContacts).values(insertContact).returning();
-    return result[0];
-  }
-
-  async updateWhatsappContact(id: string, contactData: Partial<InsertWhatsappContact>): Promise<WhatsappContact | undefined> {
-    const result = await db.update(whatsappContacts).set(contactData).where(eq(whatsappContacts.id, id)).returning();
-    return result[0];
-  }
-
-  // WhatsApp Messages
-  async getWhatsappMessages(contactId: string): Promise<WhatsappMessage[]> {
-    return await db.select().from(whatsappMessages).where(eq(whatsappMessages.contactId, contactId)).orderBy(whatsappMessages.createdAt);
-  }
-
-  async createWhatsappMessage(insertMessage: InsertWhatsappMessage): Promise<WhatsappMessage> {
-    const result = await db.insert(whatsappMessages).values(insertMessage).returning();
-    return result[0];
-  }
-
   // Telegram Chats
   async getTelegramChats(): Promise<TelegramChat[]> {
     return await db.select().from(telegramChats).orderBy(desc(telegramChats.lastMessageAt));
@@ -1824,20 +1804,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // App Settings
-  async getSetting(key: string): Promise<AppSettings | undefined> {
-    const result = await db.select().from(appSettings).where(eq(appSettings.key, key));
-    return result[0];
-  }
 
-  async setSetting(key: string, value: string): Promise<AppSettings> {
-    const existing = await this.getSetting(key);
-    if (existing) {
-      const result = await db.update(appSettings).set({ value, updatedAt: new Date() }).where(eq(appSettings.key, key)).returning();
-      return result[0];
-    }
-    const result = await db.insert(appSettings).values({ key, value }).returning();
-    return result[0];
-  }
 
 
 
