@@ -250,12 +250,7 @@ export interface IStorage {
   getDocuments(): Promise<Document[]>;
   getDocumentsMetadata(): Promise<Omit<Document, 'content'>[]>;
 
-  // Anagrafica Clienti
-  getAnagraficaClienti(): Promise<AnagraficaClienti[]>;
-  getAnagraficaCliente(id: string): Promise<AnagraficaClienti | undefined>;
-  createAnagraficaCliente(cliente: InsertAnagraficaClienti): Promise<AnagraficaClienti>;
-  updateAnagraficaCliente(id: string, cliente: Partial<InsertAnagraficaClienti>): Promise<AnagraficaClienti | undefined>;
-  deleteAnagraficaCliente(id: string): Promise<boolean>;
+
 
   // Anagrafica Fornitori
   getAnagraficaFornitori(): Promise<AnagraficaFornitori[]>;
@@ -265,9 +260,9 @@ export interface IStorage {
   deleteAnagraficaFornitore(id: string): Promise<boolean>;
 
   // Indirizzi Spedizione
-  getIndirizziSpedizione(clienteId: string): Promise<IndirizzoSpedizione[]>;
-  createIndirizzoSpedizione(indirizzo: InsertIndirizzoSpedizione): Promise<IndirizzoSpedizione>;
-  updateIndirizzoSpedizione(id: string, indirizzo: Partial<InsertIndirizzoSpedizione>): Promise<IndirizzoSpedizione | undefined>;
+  getIndirizziSpedizione(clienteId: string): Promise<IndirizzoSpedizioneCliente[]>;
+  createIndirizzoSpedizione(indirizzo: InsertIndirizzoSpedizioneCliente): Promise<IndirizzoSpedizioneCliente>;
+  updateIndirizzoSpedizione(id: string, indirizzo: Partial<InsertIndirizzoSpedizioneCliente>): Promise<IndirizzoSpedizioneCliente | undefined>;
   deleteIndirizzoSpedizione(id: string): Promise<boolean>;
   getDocumentsMetadataByOwner(ownerId: string): Promise<Omit<Document, 'content'>[]>;
   getDocumentsMetadataSharedWithUser(userId: string): Promise<Omit<Document, 'content'>[]>;
@@ -435,12 +430,6 @@ export interface IStorage {
   createAnagraficaCliente(cliente: InsertAnagraficaClienti): Promise<AnagraficaClienti>;
   updateAnagraficaCliente(id: string, cliente: Partial<InsertAnagraficaClienti>): Promise<AnagraficaClienti | undefined>;
   deleteAnagraficaCliente(id: string): Promise<boolean>;
-  searchAnagraficaClienti(query: string): Promise<AnagraficaClienti[]>;
-
-  getReferentiByCliente(clienteId: string): Promise<ReferenteCliente[]>;
-  getSalesOrdersByCliente(clienteId: string): Promise<SalesOrder[]>;
-  getQuotesByCliente(clienteId: string): Promise<Quote[]>;
-  getInvoicesByCliente(clienteId: string): Promise<Invoice[]>;
 
 
   getOfficeDocuments(): Promise<OfficeDocument[]>;
@@ -480,11 +469,8 @@ export interface IStorage {
   updateBackupSchedule(id: string, schedule: Partial<InsertBackupSchedule>): Promise<BackupSchedule | undefined>;
   deleteBackupSchedule(id: string): Promise<boolean>;
 
-  // App Settings
-  getSetting(key: string): Promise<AppSettings | undefined>;
-  setSetting(key: string, value: string): Promise<AppSettings>;
-  deleteSetting(key: string): Promise<void>;
-  isSetupComplete(): Promise<boolean>;
+
+
 }
 
 
@@ -494,62 +480,10 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users);
   }
 
-  // Anagrafica Clienti
-  async getAnagraficaClienti(): Promise<AnagraficaClienti[]> {
-    return await db.select().from(anagraficaClienti);
-  }
 
-  async getAnagraficaCliente(id: string): Promise<AnagraficaClienti | undefined> {
-    const result = await db.select().from(anagraficaClienti).where(eq(anagraficaClienti.id, id));
-    return result[0];
-  }
 
-  async createAnagraficaCliente(cliente: InsertAnagraficaClienti): Promise<AnagraficaClienti> {
-    const newCliente = {
-      ...cliente,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(anagraficaClienti).values(newCliente).returning();
-    return result[0];
-  }
 
-  async updateAnagraficaCliente(id: string, cliente: Partial<InsertAnagraficaClienti>): Promise<AnagraficaClienti | undefined> {
-    const result = await db.update(anagraficaClienti).set({ ...cliente, updatedAt: new Date().toISOString() }).where(eq(anagraficaClienti.id, id)).returning();
-    return result[0];
-  }
 
-  async deleteAnagraficaCliente(id: string): Promise<boolean> {
-    const result = await db.delete(anagraficaClienti).where(eq(anagraficaClienti.id, id)).returning();
-    return result.length > 0;
-  }
-
-  async searchAnagraficaClienti(query: string): Promise<AnagraficaClienti[]> {
-    const lowerQuery = query.toLowerCase();
-    const searchPattern = `%${lowerQuery}%`;
-    return await db.select().from(anagraficaClienti)
-      .where(or(
-        like(anagraficaClienti.ragioneSociale, searchPattern),
-        like(anagraficaClienti.email, searchPattern),
-        like(anagraficaClienti.partitaIva, searchPattern)
-      ));
-  }
-
-  async getReferentiByCliente(clienteId: string): Promise<ReferenteCliente[]> {
-    return await db.select().from(referentiClienti).where(eq(referentiClienti.clienteId, clienteId));
-  }
-
-  async getSalesOrdersByCliente(clienteId: string): Promise<SalesOrder[]> {
-    return await db.select().from(salesOrders).where(eq(salesOrders.clienteId, clienteId));
-  }
-
-  async getQuotesByCliente(clienteId: string): Promise<Quote[]> {
-    return await db.select().from(quotes).where(eq(quotes.clienteId, clienteId));
-  }
-
-  async getInvoicesByCliente(clienteId: string): Promise<Invoice[]> {
-    return await db.select().from(invoices).where(eq(invoices.clienteId, clienteId));
-  }
 
 
   async getUser(id: string): Promise<User | undefined> {
@@ -898,6 +832,8 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+
+
   async deleteEmailAttachment(id: string): Promise<boolean> {
     const result = await db.delete(emailAttachments).where(eq(emailAttachments.id, id)).returning();
     return result.length > 0;
@@ -954,7 +890,7 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getEmailSyncState(state.userId, state.folder);
     if (existing) {
       const [updated] = await db.update(emailSyncState)
-        .set({ ...state, updatedAt: new Date() })
+        .set({ ...state, updatedAt: new Date().toISOString() })
         .where(eq(emailSyncState.id, existing.id))
         .returning();
       return updated;
@@ -965,7 +901,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateEmailSyncState(id: string, state: Partial<InsertEmailSyncState>): Promise<EmailSyncState | undefined> {
     const [updated] = await db.update(emailSyncState)
-      .set({ ...state, updatedAt: new Date() })
+      .set({ ...state, updatedAt: new Date().toISOString() })
       .where(eq(emailSyncState.id, id))
       .returning();
     return updated;
@@ -1208,23 +1144,23 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Indirizzi Spedizione
-  async getIndirizziSpedizione(clienteId: string): Promise<IndirizzoSpedizione[]> {
-    return await db.select().from(indirizziSpedizione).where(eq(indirizziSpedizione.clienteId, clienteId));
+  async getIndirizziSpedizione(clienteId: string): Promise<IndirizzoSpedizioneCliente[]> {
+    return await db.select().from(indirizziSpedizioneClienti).where(eq(indirizziSpedizioneClienti.clienteId, clienteId));
   }
 
-  async createIndirizzoSpedizione(indirizzo: InsertIndirizzoSpedizione): Promise<IndirizzoSpedizione> {
+  async createIndirizzoSpedizione(indirizzo: InsertIndirizzoSpedizioneCliente): Promise<IndirizzoSpedizioneCliente> {
     const id = randomUUID();
-    const [newIndirizzo] = await db.insert(indirizziSpedizione).values({ ...indirizzo, id, createdAt: new Date().toISOString() }).returning();
+    const [newIndirizzo] = await db.insert(indirizziSpedizioneClienti).values({ ...indirizzo, id, createdAt: new Date().toISOString() }).returning();
     return newIndirizzo;
   }
 
-  async updateIndirizzoSpedizione(id: string, indirizzo: Partial<InsertIndirizzoSpedizione>): Promise<IndirizzoSpedizione | undefined> {
-    const [updated] = await db.update(indirizziSpedizione).set(indirizzo).where(eq(indirizziSpedizione.id, id)).returning();
+  async updateIndirizzoSpedizione(id: string, indirizzo: Partial<InsertIndirizzoSpedizioneCliente>): Promise<IndirizzoSpedizioneCliente | undefined> {
+    const [updated] = await db.update(indirizziSpedizioneClienti).set(indirizzo).where(eq(indirizziSpedizioneClienti.id, id)).returning();
     return updated;
   }
 
   async deleteIndirizzoSpedizione(id: string): Promise<boolean> {
-    const [deleted] = await db.delete(indirizziSpedizione).where(eq(indirizziSpedizione.id, id)).returning();
+    const [deleted] = await db.delete(indirizziSpedizioneClienti).where(eq(indirizziSpedizioneClienti.id, id)).returning();
     return !!deleted;
   }
 
@@ -1803,12 +1739,29 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  // App Settings
+  async getSetting(key: string): Promise<AppSettings | undefined> {
+    const result = await db.select().from(appSettings).where(eq(appSettings.key, key));
+    return result[0];
+  }
 
+  async setSetting(key: string, value: string): Promise<AppSettings> {
+    const existing = await this.getSetting(key);
+    if (existing) {
+      const [updated] = await db.update(appSettings)
+        .set({ value, updatedAt: new Date().toISOString() })
+        .where(eq(appSettings.key, key))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(appSettings)
+      .values({ key, value, id: randomUUID(), createdAt: new Date().toISOString() })
+      .returning();
+    return created;
+  }
 
-
-
-  async isSetupComplete(): Promise<boolean> {
+  async deleteSetting(key: string): Promise<void> {
+    await db.delete(appSettings).where(eq(appSettings.key, key));
+  } async isSetupComplete(): Promise<boolean> {
     const setting = await this.getSetting('setup_complete');
     return setting?.value === 'true';
   }
@@ -2072,7 +2025,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateTurno(id: string, data: Partial<InsertTurno>): Promise<Turno | undefined> {
     const result = await db.update(turni)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(turni.id, id))
       .returning();
     return result[0];
@@ -2131,7 +2084,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateStraordinario(id: string, data: Partial<Straordinario>): Promise<Straordinario | undefined> {
     const result = await db.update(straordinari)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(straordinari.id, id))
       .returning();
     return result[0];
@@ -2166,7 +2119,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateRichiestaAssenza(id: string, data: Partial<RichiestaAssenza>): Promise<RichiestaAssenza | undefined> {
     const result = await db.update(richiesteAssenza)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(richiesteAssenza.id, id))
       .returning();
     return result[0];
@@ -2196,7 +2149,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateSaldoFeriePermessi(id: string, data: Partial<SaldoFeriePermessi>): Promise<SaldoFeriePermessi | undefined> {
     const result = await db.update(saldiFeriePermessi)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(saldiFeriePermessi.id, id))
       .returning();
     return result[0];
@@ -2227,7 +2180,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateScadenzaHr(id: string, data: Partial<ScadenzaHr>): Promise<ScadenzaHr | undefined> {
     const result = await db.update(scadenzeHr)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(scadenzeHr.id, id))
       .returning();
     return result[0];
@@ -2238,147 +2191,11 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  // Anagrafica Clienti
-  async getAnagraficaClienti(): Promise<AnagraficaClienti[]> {
-    return await db.select().from(anagraficaClienti).orderBy(desc(anagraficaClienti.createdAt));
-  }
 
-  async getAnagraficaClientiById(id: string): Promise<AnagraficaClienti | undefined> {
-    const result = await db.select().from(anagraficaClienti).where(eq(anagraficaClienti.id, id));
-    return result[0];
-  }
 
-  async createAnagraficaClienti(data: InsertAnagraficaClienti): Promise<AnagraficaClienti> {
-    const newCliente = {
-      ...data,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(anagraficaClienti).values(newCliente).returning();
-    return result[0];
-  }
 
-  async updateAnagraficaClienti(id: string, data: Partial<InsertAnagraficaClienti>): Promise<AnagraficaClienti | undefined> {
-    const result = await db.update(anagraficaClienti)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(anagraficaClienti.id, id))
-      .returning();
-    return result[0];
-  }
 
-  async deleteAnagraficaClienti(id: string): Promise<boolean> {
-    const result = await db.delete(anagraficaClienti).where(eq(anagraficaClienti.id, id)).returning();
-    return result.length > 0;
-  }
 
-  async searchAnagraficaClienti(query: string): Promise<AnagraficaClienti[]> {
-    const searchPattern = `%${query}%`;
-    return await db.select().from(anagraficaClienti)
-      .where(or(
-        like(anagraficaClienti.ragioneSociale, searchPattern),
-        like(anagraficaClienti.partitaIva, searchPattern),
-        like(anagraficaClienti.codiceFiscale, searchPattern)
-      ))
-      .orderBy(anagraficaClienti.ragioneSociale)
-      .limit(50);
-  }
-
-  async getReferentiByCliente(clienteId: string): Promise<ReferenteCliente[]> {
-    return await db.select().from(referentiClienti)
-      .where(eq(referentiClienti.clienteId, clienteId))
-      .orderBy(desc(referentiClienti.principale), referentiClienti.cognome, referentiClienti.nome);
-  }
-
-  async getSalesOrdersByCliente(clienteId: string): Promise<SalesOrder[]> {
-    return await db.select().from(salesOrders)
-      .where(eq(salesOrders.clienteId, clienteId))
-      .orderBy(desc(salesOrders.createdAt));
-  }
-
-  async getQuotesByCliente(clienteId: string): Promise<Quote[]> {
-    return await db.select().from(quotes)
-      .where(eq(quotes.clienteId, clienteId))
-      .orderBy(desc(quotes.createdAt));
-  }
-
-  async getInvoicesByCliente(clienteId: string): Promise<Invoice[]> {
-    return await db.select().from(invoices)
-      .where(eq(invoices.clienteId, clienteId))
-      .orderBy(desc(invoices.createdAt));
-  }
-
-  // Indirizzi Spedizione Clienti
-  async getIndirizziSpedizioneByCliente(clienteId: string): Promise<IndirizzoSpedizioneCliente[]> {
-    return await db.select().from(indirizziSpedizioneClienti)
-      .where(eq(indirizziSpedizioneClienti.clienteId, clienteId))
-      .orderBy(desc(indirizziSpedizioneClienti.principale), indirizziSpedizioneClienti.nome);
-  }
-
-  async getIndirizzoSpedizioneById(id: string): Promise<IndirizzoSpedizioneCliente | undefined> {
-    const result = await db.select().from(indirizziSpedizioneClienti).where(eq(indirizziSpedizioneClienti.id, id));
-    return result[0];
-  }
-
-  async createIndirizzoSpedizione(data: InsertIndirizzoSpedizioneCliente): Promise<IndirizzoSpedizioneCliente> {
-    // Se è principale, rimuovi il flag dagli altri
-    if (data.principale) {
-      await db.update(indirizziSpedizioneClienti)
-        .set({ principale: false })
-        .where(eq(indirizziSpedizioneClienti.clienteId, data.clienteId));
-    }
-    const result = await db.insert(indirizziSpedizioneClienti).values(data).returning();
-    return result[0];
-  }
-
-  async updateIndirizzoSpedizione(id: string, data: Partial<InsertIndirizzoSpedizioneCliente>): Promise<IndirizzoSpedizioneCliente | undefined> {
-    // Se diventa principale, rimuovi il flag dagli altri
-    if (data.principale) {
-      const current = await this.getIndirizzoSpedizioneById(id);
-      if (current) {
-        await db.update(indirizziSpedizioneClienti)
-          .set({ principale: false })
-          .where(eq(indirizziSpedizioneClienti.clienteId, current.clienteId));
-      }
-    }
-    const result = await db.update(indirizziSpedizioneClienti)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(indirizziSpedizioneClienti.id, id))
-      .returning();
-    return result[0];
-  }
-
-  async deleteIndirizzoSpedizione(id: string): Promise<boolean> {
-    const result = await db.delete(indirizziSpedizioneClienti).where(eq(indirizziSpedizioneClienti.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // Anagrafica Fornitori
-  async getAnagraficaFornitori(): Promise<AnagraficaFornitori[]> {
-    return await db.select().from(anagraficaFornitori).orderBy(desc(anagraficaFornitori.createdAt));
-  }
-
-  async getAnagraficaFornitoriById(id: string): Promise<AnagraficaFornitori | undefined> {
-    const result = await db.select().from(anagraficaFornitori).where(eq(anagraficaFornitori.id, id));
-    return result[0];
-  }
-
-  async createAnagraficaFornitori(data: InsertAnagraficaFornitori): Promise<AnagraficaFornitori> {
-    const result = await db.insert(anagraficaFornitori).values(data).returning();
-    return result[0];
-  }
-
-  async updateAnagraficaFornitori(id: string, data: Partial<InsertAnagraficaFornitori>): Promise<AnagraficaFornitori | undefined> {
-    const result = await db.update(anagraficaFornitori)
-      .set({ ...data, updatedAt: new Date() })
-      .where(eq(anagraficaFornitori.id, id))
-      .returning();
-    return result[0];
-  }
-
-  async deleteAnagraficaFornitori(id: string): Promise<boolean> {
-    const result = await db.delete(anagraficaFornitori).where(eq(anagraficaFornitori.id, id)).returning();
-    return result.length > 0;
-  }
 
   // Backups
   async getBackups(): Promise<Backup[]> {
@@ -2461,7 +2278,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateBackupSchedule(id: string, data: Partial<InsertBackupSchedule>): Promise<BackupSchedule | undefined> {
     const result = await db.update(backupSchedules)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(backupSchedules.id, id))
       .returning();
     return result[0];
@@ -2493,7 +2310,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateFinanceAccount(id: string, data: Partial<InsertFinanceAccount>): Promise<FinanceAccount | undefined> {
     const result = await db.update(financeAccounts)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data, updatedAt: new Date().toISOString() })
       .where(eq(financeAccounts.id, id))
       .returning();
     return result[0];

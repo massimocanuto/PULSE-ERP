@@ -281,9 +281,9 @@ export const documents = sqliteTable("documents", {
   ownerId: text("owner_id").references(() => users.id),
   lastEditorId: text("last_editor_id").references(() => users.id),
   lastEditedAt: text("last_edited_at"),
-  isPublic: integer("is_public").notNull().default(0),
-  isArchived: integer("is_archived").notNull().default(0),
-  needsReview: integer("needs_review").notNull().default(0),
+  isPublic: integer("is_public", { mode: "boolean" }).notNull().default(false),
+  isArchived: integer("is_archived", { mode: "boolean" }).notNull().default(false),
+  needsReview: integer("needs_review", { mode: "boolean" }).notNull().default(false),
   tags: text("tags").default("[]"),
   createdAt: text("created_at"),
   updatedAt: text("updated_at"),
@@ -386,7 +386,7 @@ export const archivedDocuments = sqliteTable("archived_documents", {
   fileType: text("file_type").notNull(),
   fileSize: integer("file_size"),
   tags: text("tags").default("[]"),
-  starred: integer("starred").notNull().default(0),
+  starred: integer("starred", { mode: "boolean" }).notNull().default(false),
   notes: text("notes"),
   aiSummary: text("ai_summary"),
   archivedAt: text("archived_at"),
@@ -411,10 +411,10 @@ export const userPermissions = sqliteTable("user_permissions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   module: text("module").notNull(),
-  canView: integer("can_view").notNull().default(0),
-  canCreate: integer("can_create").notNull().default(0),
-  canEdit: integer("can_edit").notNull().default(0),
-  canDelete: integer("can_delete").notNull().default(0),
+  canView: integer("can_view", { mode: "boolean" }).notNull().default(false),
+  canCreate: integer("can_create", { mode: "boolean" }).notNull().default(false),
+  canEdit: integer("can_edit", { mode: "boolean" }).notNull().default(false),
+  canDelete: integer("can_delete", { mode: "boolean" }).notNull().default(false),
 });
 
 export const insertUserPermissionSchema = createInsertSchema(userPermissions).omit({ id: true });
@@ -567,7 +567,7 @@ export const notifications = sqliteTable("notifications", {
   resourceType: text("resource_type"),
   resourceId: text("resource_id"),
   fromUserId: text("from_user_id").references(() => users.id),
-  read: integer("read").notNull().default(0),
+  read: integer("read", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at"),
 });
 
@@ -975,7 +975,7 @@ export const turniPredefiniti = sqliteTable("turni_predefiniti", {
   oraFine: text("ora_fine").notNull(),
   pausa: integer("pausa").default(60),
   colore: text("colore").default("#3b82f6"),
-  attivo: integer("attivo").default(1),
+  attivo: integer("attivo", { mode: "boolean" }).default(true),
   ordine: integer("ordine").default(0),
   createdAt: text("created_at"),
 });
