@@ -3,6 +3,9 @@ import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,7 +78,7 @@ async function buildAll() {
     "../PULSE-ERP/dist",
     path.resolve(__dirname, "..", "dist"),
   ];
-  
+
   for (const p of possibleDistPaths) {
     try {
       await rm(p, { recursive: true, force: true });
@@ -98,6 +101,20 @@ async function buildAll() {
     ...allDeps.filter((dep) => !allowlist.includes(dep)),
     ...nativeModules,
   ];
+  console.log("Externals:", externals);
+
+  // Plugin to force drizzle-orm to resolve to CJS entry point to avoid dual package hazard
+  const drizzleAliasPlugin = {
+    name: "alias-drizzle",
+    setup(build: any) {
+      build.onResolve({ filter: /^drizzle-orm$/ }, () => {
+        return { path: require.resolve('drizzle-orm') }
+      });
+      build.onResolve({ filter: /^drizzle-orm\/sqlite-core$/ }, () => {
+        return { path: require.resolve('drizzle-orm/sqlite-core') }
+      });
+    }
+  };
 
   await esbuild({
     entryPoints: ["server/index.ts"],
@@ -108,6 +125,7 @@ async function buildAll() {
     banner: {
       js: `const __bundle_filename = __filename; const __bundle_dirname = __dirname;`,
     },
+    mainFields: ['module', 'main'],
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -118,6 +136,7 @@ async function buildAll() {
       ".node": "copy",
     },
     plugins: [
+      drizzleAliasPlugin,
       {
         name: "native-node-modules",
         setup(build) {

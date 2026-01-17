@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
-import { createInsertSchema } from "drizzle-zod";
+import { createInsertSchema } from "./drizzle-zod-shim";
 import { z } from "zod";
 
 // Users table
@@ -768,8 +768,9 @@ export const userWhatsappConfigs = sqliteTable("user_whatsapp_configs", {
   updatedAt: text("updated_at"),
 });
 
-
-export const insertUserWhatsappConfigSchema = createInsertSchema(userWhatsappConfigs).omit({ id: true, createdAt: true, updatedAt: true, lastConnectedAt: true });
+export const insertOfficeDocumentSchema = createInsertSchema(officeDocuments).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertOfficeDocument = z.infer<typeof insertOfficeDocumentSchema>;
+export type OfficeDocument = typeof officeDocuments.$inferSelect; export const insertUserWhatsappConfigSchema = createInsertSchema(userWhatsappConfigs).omit({ id: true, createdAt: true, updatedAt: true, lastConnectedAt: true });
 export type InsertUserWhatsappConfig = z.infer<typeof insertUserWhatsappConfigSchema>;
 export type UserWhatsappConfig = typeof userWhatsappConfigs.$inferSelect;
 

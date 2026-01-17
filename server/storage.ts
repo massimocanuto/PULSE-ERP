@@ -102,7 +102,7 @@ import {
   MODULES, ROLES
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, asc, and, or, inArray, isNull, isNotNull, sql, like, max } from "drizzle-orm";
+import { eq, desc, asc, and, or, inArray, isNull, isNotNull, sql, like, max, count } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -119,7 +119,7 @@ export interface IStorage {
   createUserAccessLog(log: InsertUserAccessLog): Promise<UserAccessLog>;
 
   // Projects
-  getProjects(): Promise<Project[]>;
+  getProjects(userId?: string): Promise<Project[]>;
   getProject(id: string): Promise<Project | undefined>;
   createProject(project: InsertProject): Promise<Project>;
   updateProject(id: string, project: Partial<InsertProject>): Promise<Project | undefined>;
@@ -132,7 +132,7 @@ export interface IStorage {
   deleteProjectShare(id: string): Promise<boolean>;
 
   // Tasks
-  getTasks(): Promise<Task[]>;
+  getTasks(userId?: string): Promise<Task[]>;
   getTask(id: string): Promise<Task | undefined>;
   getTasksByProject(projectId: string): Promise<Task[]>;
   createTask(task: InsertTask): Promise<Task>;
@@ -141,6 +141,7 @@ export interface IStorage {
 
   // Emails
   getEmails(userId?: string, limit?: number): Promise<Email[]>;
+  getUnreadEmailCount(userId: string): Promise<number>;
   getEmail(id: string): Promise<Email | undefined>;
   createEmail(email: InsertEmail): Promise<Email>;
   updateEmail(id: string, email: Partial<InsertEmail>): Promise<Email | undefined>;
@@ -535,7 +536,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Projects
-  async getProjects(): Promise<Project[]> {
+  async getProjects(userId?: string): Promise<Project[]> {
+    if (userId) {
+      // Get projects where user is owner OR is in teamMembers
+      // Note: teamMembers is stored as a JSON string in SQLite (text column)
+      // We can filter in memory for now OR use a LIKE query if we trust the format
+      // Better to fetch all and filter in memory for reliable JSON parsing, 
+      // or if list is huge, use detailed SQL. Given SQLite and likely small load, memory filter is safer for JSON.
+      // However, let's try a LIKE query for performance if possible, or simple array filter.
+      // Let's use array filter for correctness with JSON.
+      const allProjects = await db.select().from(projects).orderBy(desc(projects.createdAt));
+      return allProjects.filter(p => {
+        if (p.owner === userId) return true;
+        try {
+          const members = JSON.parse(p.teamMembers as unknown as string || "[]");
+          return Array.isArray(members) && members.includes(userId);
+        } catch (e) {
+          return false;
+        }
+      });
+    }
     return await db.select().from(projects).orderBy(desc(projects.createdAt));
   }
 
@@ -589,7 +609,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Tasks
-  async getTasks(): Promise<Task[]> {
+  async getTasks(userId?: string): Promise<Task[]> {
+    if (userId) {
+      // Filter tasks assigned to the user
+      return await db.select().from(tasks)
+        .where(eq(tasks.assignedTo, userId))
+        .orderBy(desc(tasks.createdAt));
+    }
     return await db.select().from(tasks).orderBy(desc(tasks.createdAt));
   }
 
@@ -623,6 +649,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Emails
+  async getUnreadEmailCount(userId: string): Promise<number> {
+    const result = await db
+      .select({ count: count() })
+      .from(emails)
+      .where(and(
+        eq(emails.userId, userId),
+        eq(emails.unread, true),
+        eq(emails.folder, 'INBOX') // Only count INBOX unread
+      ));
+    return result[0]?.count || 0;
+  }
+
   async getEmails(userId?: string, limit?: number): Promise<Email[]> {
     if (userId) {
       const query = db.select().from(emails).where(eq(emails.userId, userId)).orderBy(desc(emails.receivedAt));
@@ -3657,201 +3695,11 @@ export class DatabaseStorage implements IStorage {
 
 
   // Finance - Invoices
-  async getInvoices(): Promise<Invoice[]> {
-    return await db.select().from(invoices).orderBy(desc(invoices.createdAt));
-  }
 
-  async getInvoice(id: string): Promise<Invoice | undefined> {
-    const result = await db.select().from(invoices).where(eq(invoices.id, id));
-    return result[0];
-  }
 
-  async getProjectInvoices(projectId: string): Promise<Invoice[]> {
-    return await db.select().from(invoices).where(eq(invoices.projectId, projectId)).orderBy(desc(invoices.createdAt));
-  }
 
-  async createInvoice(insertInvoice: InsertInvoice): Promise<Invoice> {
-    const invoice = {
-      ...insertInvoice,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(invoices).values(invoice).returning();
-    return result[0];
-  }
 
-  async updateInvoice(id: string, invoiceData: Partial<InsertInvoice>): Promise<Invoice | undefined> {
-    const result = await db.update(invoices).set(invoiceData).where(eq(invoices.id, id)).returning();
-    return result[0];
-  }
 
-  // Finance - Quotes
-  async getQuotes(): Promise<Quote[]> {
-    return await db.select().from(quotes).orderBy(desc(quotes.createdAt));
-  }
-
-  async getQuote(id: string): Promise<Quote | undefined> {
-    const result = await db.select().from(quotes).where(eq(quotes.id, id));
-    return result[0];
-  }
-
-  async getProjectQuotes(projectId: string): Promise<Quote[]> {
-    return await db.select().from(quotes).where(eq(quotes.projectId, projectId)).orderBy(desc(quotes.createdAt));
-  }
-
-  async createQuote(insertQuote: InsertQuote): Promise<Quote> {
-    const quote = {
-      ...insertQuote,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(quotes).values(quote).returning();
-    return result[0];
-  }
-
-  async updateQuote(id: string, quoteData: Partial<InsertQuote>): Promise<Quote | undefined> {
-    const result = await db.update(quotes).set(quoteData).where(eq(quotes.id, id)).returning();
-    return result[0];
-  }
-
-  // Finance - Transactions
-  async getTransactions(): Promise<FinanceTransaction[]> {
-    return await db.select().from(financeTransactions).orderBy(desc(financeTransactions.date));
-  }
-
-  async getTransaction(id: string): Promise<FinanceTransaction | undefined> {
-    const result = await db.select().from(financeTransactions).where(eq(financeTransactions.id, id));
-    return result[0];
-  }
-
-  async getProjectTransactions(projectId: string): Promise<FinanceTransaction[]> {
-    return await db.select().from(financeTransactions).where(eq(financeTransactions.projectId, projectId)).orderBy(desc(financeTransactions.date));
-  }
-
-  async createTransaction(insertTransaction: InsertFinanceTransaction): Promise<FinanceTransaction> {
-    const transaction = {
-      ...insertTransaction,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(financeTransactions).values(transaction).returning();
-    return result[0];
-  }
-
-  async updateTransaction(id: string, transactionData: Partial<InsertFinanceTransaction>): Promise<FinanceTransaction | undefined> {
-    const [updated] = await db.update(financeTransactions).set(transactionData).where(eq(financeTransactions.id, id)).returning();
-    return updated;
-  }
-
-  // Office Documents
-  async getOfficeDocuments(): Promise<OfficeDocument[]> {
-    return await db.select().from(officeDocuments).orderBy(desc(officeDocuments.updatedAt));
-  }
-
-  async getOfficeDocument(id: string): Promise<OfficeDocument | undefined> {
-    const result = await db.select().from(officeDocuments).where(eq(officeDocuments.id, id));
-    return result[0];
-  }
-
-  async createOfficeDocument(insertDoc: InsertOfficeDocument): Promise<OfficeDocument> {
-    const doc = {
-      ...insertDoc,
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const result = await db.insert(officeDocuments).values(doc).returning();
-    return result[0];
-  }
-
-  async updateOfficeDocument(id: string, docData: Partial<InsertOfficeDocument>): Promise<OfficeDocument | undefined> {
-    const result = await db.update(officeDocuments).set({ ...docData, updatedAt: new Date().toISOString() }).where(eq(officeDocuments.id, id)).returning();
-    return result[0];
-  }
-
-  async deleteOfficeDocument(id: string): Promise<boolean> {
-    const result = await db.delete(officeDocuments).where(eq(officeDocuments.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // WhatsApp Contacts
-  async getWhatsappContacts(): Promise<WhatsappContact[]> {
-    return await db.select().from(whatsappContacts).orderBy(desc(whatsappContacts.lastMessageAt));
-  }
-
-  async getWhatsappContact(id: string): Promise<WhatsappContact | undefined> {
-    const result = await db.select().from(whatsappContacts).where(eq(whatsappContacts.id, id));
-    return result[0];
-  }
-
-  async createWhatsappContact(insertContact: InsertWhatsappContact): Promise<WhatsappContact> {
-    const contact = {
-      ...insertContact,
-      id: randomUUID(),
-      lastMessageAt: new Date().toISOString()
-    };
-    const result = await db.insert(whatsappContacts).values(contact).returning();
-    return result[0];
-  }
-
-  async updateWhatsappContact(id: string, contactData: Partial<InsertWhatsappContact>): Promise<WhatsappContact | undefined> {
-    const result = await db.update(whatsappContacts).set(contactData).where(eq(whatsappContacts.id, id)).returning();
-    return result[0];
-  }
-
-  // WhatsApp Messages
-  async getWhatsappMessages(contactId: string): Promise<WhatsappMessage[]> {
-    return await db.select().from(whatsappMessages).where(eq(whatsappMessages.contactId, contactId)).orderBy(asc(whatsappMessages.timestamp));
-  }
-
-  async createWhatsappMessage(insertMessage: InsertWhatsappMessage): Promise<WhatsappMessage> {
-    const message = {
-      ...insertMessage,
-      id: randomUUID(),
-      createdAt: new Date().toISOString()
-    };
-    const result = await db.insert(whatsappMessages).values(message).returning();
-    return result[0];
-  }
-
-  // Project Documents
-  async getProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
-    return await db.select().from(projectDocuments).where(eq(projectDocuments.projectId, projectId));
-  }
-
-  async getProjectDocumentsWithDetails(projectId: string): Promise<(ProjectDocument & { document: Document })[]> {
-    const rows = await db.select().from(projectDocuments)
-      .innerJoin(documents, eq(projectDocuments.documentId, documents.id))
-      .where(eq(projectDocuments.projectId, projectId));
-
-    return rows.map(row => ({
-      ...row.project_documents,
-      document: row.documents
-    }));
-  }
-
-  async addProjectDocument(data: InsertProjectDocument): Promise<ProjectDocument> {
-    const newDoc = {
-      ...data,
-      id: randomUUID(),
-      addedAt: new Date().toISOString()
-    };
-    const [result] = await db.insert(projectDocuments).values(newDoc).returning();
-    return result;
-  }
-
-  async removeProjectDocument(id: string): Promise<boolean> {
-    const result = await db.delete(projectDocuments).where(eq(projectDocuments.id, id)).returning();
-    return result.length > 0;
-  }
-
-  async getDocumentProjects(documentId: string): Promise<Project[]> {
-    const rows = await db.select().from(projectDocuments)
-      .innerJoin(projects, eq(projectDocuments.projectId, projects.id))
-      .where(eq(projectDocuments.documentId, documentId));
-
-    return rows.map(row => row.projects);
-  }
 
 
 

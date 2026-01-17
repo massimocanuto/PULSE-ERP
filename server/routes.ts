@@ -1280,7 +1280,8 @@ export async function registerRoutes(
   // PROJECTS API
   // =====================
   app.get("/api/projects", async (req: Request, res: Response) => {
-    const projects = await storage.getProjects();
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    const projects = await storage.getProjects(userId);
     res.json(projects);
   });
 
@@ -1998,7 +1999,8 @@ export async function registerRoutes(
   // TASKS API
   // =====================
   app.get("/api/tasks", async (req: Request, res: Response) => {
-    const tasks = await storage.getTasks();
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    const tasks = await storage.getTasks(userId);
     res.json(tasks);
   });
 
@@ -2245,6 +2247,21 @@ export async function registerRoutes(
 
   app.get("/api/user-email-config/:userId", async (req, res) => {
     try {
+      // Security check: Ensure user can only access their own config
+      const sessionUserId = (req as any).session?.userId || req.headers["x-user-id"];
+      const requestedUserId = req.params.userId;
+
+      // Allow admin to see all? Maybe not for email configs (privacy). 
+      // For now, strict check:
+      if (sessionUserId && sessionUserId !== requestedUserId) {
+        // Special case: if admin, maybe allow? 
+        // Let's check role if strict strict. 
+        // But for now, simple check.
+        // If we want to allow admin, we need to fetch user role.
+        // Assuming strict privacy for email credentials.
+        return res.status(403).json({ error: "Accesso negato alla configurazione email di un altro utente" });
+      }
+
       const configs = await storage.getUserEmailConfigs(req.params.userId);
       if (configs && configs.length > 0) {
         res.json(configs[0]);
@@ -2331,6 +2348,20 @@ export async function registerRoutes(
   // EMAILS API
 
   // =====================
+  app.get("/api/emails/unread-count", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const count = await storage.getUnreadEmailCount(userId);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching unread email count:", error);
+      res.status(500).json({ error: "Failed to fetch unread email count" });
+    }
+  });
+
   app.get("/api/emails", async (req: Request, res: Response) => {
     const userId = (req as any).session?.userId || req.headers["x-user-id"];
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;

@@ -90,6 +90,20 @@ export default function Dashboard() {
     // Refresh every minute
     refetchInterval: 60000,
   });
+  const { data: unreadEmailsCount = 0 } = useQuery({
+    queryKey: ["unread-emails-count", authUser?.id],
+    queryFn: async () => {
+      if (!authUser?.id) return 0;
+      const res = await fetch("/api/emails/unread-count", {
+        headers: { "x-user-id": authUser.id }
+      });
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return data.count;
+    },
+    // Refresh every minute
+    refetchInterval: 60000,
+  });
 
   const { data: projects = [], isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
@@ -422,12 +436,26 @@ export default function Dashboard() {
                 <Card className="shadow-lg border-0 bg-white/80 backdrop-blur">
                   <CardHeader className="border-b bg-gradient-to-r from-amber-50 to-orange-50 py-3">
                     <CardTitle className="text-sm flex items-center gap-2">
-                      <Bell className={`h-4 w-4 text-red-600 -ml-1 ${(overdue.length > 0 || dueSoon.length > 0) ? 'animate-bell-ring' : ''}`} />
+                      <Bell className={`h-4 w-4 text-red-600 -ml-1 ${(overdue.length > 0 || dueSoon.length > 0 || unreadEmailsCount > 0) ? 'animate-bell-ring' : ''}`} />
                       Notifiche Urgenti
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-3 space-y-2">
-                    {/* Email notification removed as per user request */}
+                    {unreadEmailsCount > 0 && (
+                      <Link href="/email">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 cursor-pointer hover:bg-blue-100 transition-colors">
+                          <div className="flex items-start gap-2">
+                            <Mail className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs font-bold text-blue-900">{unreadEmailsCount} Nuove Email</p>
+                              <p className="text-[10px] text-blue-700 mt-1">
+                                Da leggere
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    )}
 
                     {overdue.length > 0 && (
                       <div
@@ -466,7 +494,7 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {overdue.length === 0 && dueSoon.length === 0 && (
+                    {overdue.length === 0 && dueSoon.length === 0 && unreadEmailsCount === 0 && (
                       <div className="text-center py-4">
                         <CheckCircle2 className="h-8 w-8 mx-auto text-green-500 mb-2" />
                         <p className="text-xs text-muted-foreground">Tutto sotto controllo!</p>
