@@ -13,8 +13,9 @@ import {
   CheckSquare, X, LayoutGrid, List, Copy, RotateCcw, MoreVertical,
   Bold, Italic, Underline, Image as ImageIcon, Check, Sparkles, Inbox, BookOpen,
   Folder, FolderOpen, ChevronRight, ChevronDown, Volume2, Download, Square, Pause,
-  Bell, BellRing, Calendar, Book, FolderInput, History, Tag, Pencil
+  Bell, BellRing, Calendar, Book, FolderInput, History, Tag, Pencil, Link as LinkIcon, Upload
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useState, useRef, useMemo } from "react";
 import { BookViewer } from "@/components/BookViewer";
@@ -40,6 +41,7 @@ import {
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useToast } from "@/hooks/use-toast";
 
 interface KeepNote {
   id: string;
@@ -238,6 +240,17 @@ const keepApi = {
   },
 };
 
+const RenderMarkdown = ({ content }: { content: string | undefined }) => {
+  if (!content) return null;
+  return (
+    <div className="prose prose-sm max-w-none dark:prose-invert [&_p]:my-1 [&_img]:rounded [&_img]:my-2 [&_img]:max-h-60 [&_img]:object-contain [&_a]:text-blue-500 [&_a]:underline">
+      <ReactMarkdown>
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
 function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate, viewMode }: {
   note: KeepNote;
   onEdit: (note: KeepNote) => void;
@@ -264,6 +277,8 @@ function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate
   };
 
   const colorStyle = NOTE_COLORS[note.color] || NOTE_COLORS.default;
+  const wikiInfo = parseWikiTitle(note.title);
+
   let parsedChecklist: ChecklistItem[] = [];
   try {
     if (note.checklistItems) parsedChecklist = JSON.parse(note.checklistItems);
@@ -277,6 +292,22 @@ function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate
     }
   };
 
+  const renderContentWithMarkdown = (content: string | undefined) => {
+    if (!content) return null;
+    return (
+      <div className="prose prose-sm max-w-none dark:prose-invert [&>p]:my-1 [&>img]:rounded [&>img]:my-2 [&>a]:text-blue-500 [&>a]:underline">
+        <ReactMarkdown
+          components={{
+            a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} />,
+            img: ({ node, ...props }) => <img {...props} className="max-w-full h-auto rounded object-contain max-h-60" loading="lazy" />
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
   if (viewMode === "list") {
     return (
       <div
@@ -287,40 +318,29 @@ function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate
         className={`p-3 cursor-grab active:cursor-grabbing border-b hover:bg-muted/50 hover:translate-x-1 transition-all duration-150 ease-out flex items-center gap-4 ${colorStyle.bg}`}
         onClick={() => onEdit(note)}
       >
-        {note.imageUrl && (
-          <img src={note.imageUrl} alt="" className="w-10 h-10 object-cover rounded flex-shrink-0" />
-        )}
+
         <div className="flex-1 min-w-0">
-          <h3 className="font-medium text-sm truncate">{note.title || "Senza titolo"}</h3>
-          <p className="text-xs text-muted-foreground truncate">{note.content}</p>
+          <h3 className="font-medium text-sm truncate flex items-center gap-1.5 normal-case">
+            {wikiInfo.isWiki ? (
+              <>
+                <BookOpen className="h-3 w-3 text-cyan-600 flex-shrink-0" />
+                <span className="truncate">{wikiInfo.contact}</span>
+                {wikiInfo.version && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 font-medium flex-shrink-0">
+                    {wikiInfo.version}
+                  </span>
+                )}
+              </>
+            ) : (
+              note.title || "Senza titolo"
+            )}
+          </h3>
         </div>
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">{formatDate(note.updatedAt)}</span>
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={() => onPin(note)}
-            className={`p-1 rounded hover:bg-black/10 ${note.pinned ? "text-amber-600" : "text-gray-400"}`}
-          >
+          <button onClick={() => onPin(note)} className={`p-1 rounded hover:bg-black/10 ${note.pinned ? "text-amber-600" : "text-gray-400"}`}>
             <Pin className={`h-3.5 w-3.5 ${note.pinned ? "fill-current" : ""}`} />
           </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="p-1 rounded hover:bg-black/10 text-gray-400">
-                <MoreVertical className="h-3.5 w-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onDuplicate(note)}>
-                <Copy className="h-4 w-4 mr-2" /> Duplica
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onArchive(note)}>
-                <Archive className="h-4 w-4 mr-2" /> {note.archived ? "Rimuovi da archivio" : "Archivia"}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => onTrash(note)} className="text-red-500">
-                <Trash2 className="h-4 w-4 mr-2" /> Cestina
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
         </div>
       </div>
     );
@@ -335,18 +355,25 @@ function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate
       className={`p-4 cursor-grab active:cursor-grabbing shadow-sm hover:shadow-xl hover:scale-[1.02] transition-all duration-200 ease-out rounded-xl ${colorStyle.bg} ${colorStyle.border} border`}
       onClick={() => onEdit(note)}
     >
-      {note.imageUrl && (
-        <div className="mb-3 -mx-4 -mt-4 relative">
-          <img src={note.imageUrl} alt="" className="w-full h-32 object-cover rounded-t-xl" />
-          <div className="absolute bottom-2 right-2 bg-black/50 backdrop-blur-sm rounded-full p-1">
-            <ImageIcon className="h-3 w-3 text-white" />
-          </div>
-        </div>
-      )}
+
       <div className="flex items-start justify-between mb-2">
-        <h3 className="font-semibold text-sm line-clamp-1 flex items-center gap-1.5">
-          {note.title || "Senza titolo"}
-          {note.imageUrl && !note.imageUrl && <ImageIcon className="h-3 w-3 text-muted-foreground" />}
+        <h3 className="font-semibold text-sm line-clamp-1 flex items-center gap-1.5 normal-case">
+          {wikiInfo.isWiki ? (
+            <>
+              <BookOpen className="h-3 w-3 text-cyan-600 flex-shrink-0" />
+              <span className="truncate">{wikiInfo.contact}</span>
+              {wikiInfo.version && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 font-medium flex-shrink-0">
+                  {wikiInfo.version}
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              {note.title || "Senza titolo"}
+              {note.imageUrl && !note.imageUrl && <ImageIcon className="h-3 w-3 text-muted-foreground" />}
+            </>
+          )}
         </h3>
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <button
@@ -377,26 +404,34 @@ function SortableNoteCard({ note, onEdit, onPin, onArchive, onTrash, onDuplicate
         </div>
       </div>
 
-      {parsedChecklist.length > 0 ? (
-        <div className="space-y-1">
-          {parsedChecklist.slice(0, 5).map(item => (
-            <div key={item.id} className="flex items-center gap-2 text-xs">
-              <div className={`w-3 h-3 border rounded ${item.checked ? "bg-green-500 border-green-500" : "border-gray-400"}`} />
-              <span className={item.checked ? "line-through text-muted-foreground" : ""}>{item.text}</span>
-            </div>
-          ))}
-          {parsedChecklist.length > 5 && (
-            <p className="text-xs text-muted-foreground">+{parsedChecklist.length - 5} altri elementi</p>
-          )}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground line-clamp-4 whitespace-pre-wrap">{note.content}</p>
-      )}
+
+
+
+      {
+        parsedChecklist.length > 0 && (
+          <div className="space-y-1">
+            {parsedChecklist.slice(0, 5).map(item => (
+              <div key={item.id} className="flex items-center gap-2 text-xs">
+                <div className={`w-3 h-3 border rounded ${item.checked ? "bg-green-500 border-green-500" : "border-gray-400"}`} />
+                <span className={item.checked ? "line-through text-muted-foreground" : ""}>{item.text}</span>
+              </div>
+            ))}
+            {parsedChecklist.length > 5 && (
+              <p className="text-xs text-muted-foreground">+{parsedChecklist.length - 5} altri elementi</p>
+            )}
+          </div>
+        )
+      }
 
       <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed">
-        <span className="text-[10px] text-muted-foreground">{formatDate(note.updatedAt)}</span>
+        {/* Wiki extra info or Time */}
+        {wikiInfo.isWiki && wikiInfo.date ? (
+          <span className="text-[10px] text-muted-foreground">{wikiInfo.date}</span>
+        ) : (
+          <span className="text-[10px] text-muted-foreground">{formatDate(note.updatedAt)}</span>
+        )}
       </div>
-    </Card>
+    </Card >
   );
 }
 
@@ -445,6 +480,7 @@ function TrashNoteCard({ note, onRestore, onConfirmDelete }: {
 
 export default function PulseKeep() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [searchQuery, setSearchQuery] = useState("");
@@ -483,6 +519,16 @@ export default function PulseKeep() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputInlineRef = useRef<HTMLInputElement>(null);
+
+  // Link and Image insertion state
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkText, setLinkText] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [imageDialogOpen, setImageDialogOpen] = useState(false);
+  const [imageAlt, setImageAlt] = useState("");
+  const [imageUrlInline, setImageUrlInline] = useState("");
+
 
   const userId = user?.id || "";
 
@@ -671,11 +717,12 @@ export default function PulseKeep() {
 
   const applyFormatting = (format: "bold" | "italic" | "underline") => {
     const textarea = textareaRef.current;
-    if (!textarea) return;
+    if (!textarea || !editingNote) return;
 
+    const currentContent = editingNote.content || "";
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const selectedText = newContent.substring(start, end);
+    const selectedText = currentContent.substring(start, end);
 
     if (!selectedText) return;
 
@@ -692,9 +739,75 @@ export default function PulseKeep() {
         break;
     }
 
-    const newText = newContent.substring(0, start) + formattedText + newContent.substring(end);
-    setNewContent(newText);
+    const newText = currentContent.substring(0, start) + formattedText + currentContent.substring(end);
+    setEditingNote({ ...editingNote, content: newText });
   };
+
+  const insertLink = () => {
+    if (!linkText.trim() || !linkUrl.trim() || !editingNote) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const currentContent = editingNote.content || "";
+    const start = textarea.selectionStart;
+    const linkMarkdown = `[${linkText}](${linkUrl})`;
+
+    const newText = currentContent.substring(0, start) + linkMarkdown + currentContent.substring(start);
+    setEditingNote({ ...editingNote, content: newText });
+
+    setLinkText("");
+    setLinkUrl("");
+    setLinkDialogOpen(false);
+  };
+
+  const insertImage = () => {
+    if (!imageUrlInline.trim() || !editingNote) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const currentContent = editingNote.content || "";
+    const start = textarea.selectionStart;
+    const imageMarkdown = `![${imageAlt || "image"}](${imageUrlInline})`;
+
+    const newText = currentContent.substring(0, start) + imageMarkdown + currentContent.substring(start);
+    // If this is the first image and there's no main image yet, set it as the main image
+    const updatedNote = { ...editingNote, content: newText };
+
+    setEditingNote(updatedNote);
+
+    setImageAlt("");
+    setImageUrlInline("");
+    setImageDialogOpen(false);
+  };
+
+  const renderContent = (content: string | undefined) => {
+    if (!content) return null;
+
+    // Simple markdown parser for links and images
+    let html = content;
+
+    // Images: ![alt](url) -> <img>
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,
+      '<img src="$2" alt="$1" class="max-w-full h-auto rounded my-2" loading="lazy" />');
+
+    // Links: [text](url) -> <a>
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline hover:text-blue-700">$1</a>');
+
+    // Bold: **text** -> <strong>
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // Italic: *text* -> <em>
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // Underline: __text__ -> <u>
+    html = html.replace(/__([^_]+)__/g, '<u>$1</u>');
+
+    return <div dangerouslySetInnerHTML={{ __html: html.replace(/\n/g, '<br/>') }} className="whitespace-pre-wrap" />;
+  };
+
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -704,7 +817,7 @@ export default function PulseKeep() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("/api/upload", {
+      const res = await fetch("/api/upload/image", {
         method: "POST",
         body: formData,
       });
@@ -715,6 +828,46 @@ export default function PulseKeep() {
     } catch (error) {
       console.error("Upload failed:", error);
     }
+  };
+
+  const handleInlineImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("/api/upload/image", {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        let url = data.url || data.path;
+        if (url && !url.startsWith("http") && !url.startsWith("/")) {
+          url = "/" + url;
+        }
+        setImageUrlInline(url);
+        toast({ title: "Immagine caricata", description: "L'immagine è pronta per essere inserita." });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Errore caricamento",
+          description: "Impossibile caricare l'immagine. Riprova."
+        });
+      }
+    } catch (error) {
+      console.error("Upload failed:", error);
+      toast({
+        variant: "destructive",
+        title: "Errore",
+        description: "Si è verificato un errore durante il caricamento."
+      });
+    }
+
+    // Reset input so the same file can be selected again
+    e.target.value = "";
   };
 
   const handleCreateNote = () => {
@@ -728,7 +881,7 @@ export default function PulseKeep() {
         content: isChecklist ? undefined : editingNote.content,
         color: editingNote.color,
         checklistItems: isChecklist ? JSON.stringify(checklistItems) : undefined,
-        imageUrl: newImageUrl || undefined,
+        imageUrl: newImageUrl || editingNote.imageUrl || undefined,
         pinned: false,
         archived: false,
       });
@@ -759,6 +912,7 @@ export default function PulseKeep() {
         content: editingNote.content,
         color: editingNote.color,
         checklistItems: editingNote.checklistItems,
+        imageUrl: newImageUrl || editingNote.imageUrl,
       },
     });
   };
@@ -1426,46 +1580,18 @@ export default function PulseKeep() {
                         </div>
                         <SortableContext items={pinnedNotes.map(n => n.id)} strategy={rectSortingStrategy}>
                           <div className="divide-y">
-                            {pinnedNotes.map(note => {
-                              const colorStyle = NOTE_COLORS[note.color] || NOTE_COLORS.default;
-                              const wikiInfo = parseWikiTitle(note.title);
-                              return (
-                                <div
-                                  key={note.id}
-                                  className={`p-3 cursor-pointer hover:bg-muted/50 transition-colors ${colorStyle.bg} ${editingNote?.id === note.id ? "ring-2 ring-amber-500 ring-inset" : ""}`}
-                                  onClick={() => setEditingNote(note)}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <Pin className="h-3 w-3 text-amber-600 fill-current flex-shrink-0" />
-                                    <h3 className="font-medium text-sm truncate flex-1 flex items-center gap-1.5">
-                                      {wikiInfo.isWiki ? (
-                                        <>
-                                          <span className="truncate">{wikiInfo.contact}</span>
-                                          {wikiInfo.version && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 font-medium flex-shrink-0">
-                                              {wikiInfo.version}
-                                            </span>
-                                          )}
-                                        </>
-                                      ) : (
-                                        note.title || "Senza titolo"
-                                      )}
-                                    </h3>
-                                  </div>
-                                  {wikiInfo.isWiki ? (
-                                    <div className="flex items-center gap-2 mt-1 pl-5">
-                                      {wikiInfo.date && (
-                                        <span className="text-[10px] text-muted-foreground">{wikiInfo.date}</span>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-2 mt-1 pl-5">
-                                      <p className="text-xs text-muted-foreground truncate flex-1">{note.content}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
+                            {pinnedNotes.map(note => (
+                              <SortableNoteCard
+                                key={note.id}
+                                note={note}
+                                onEdit={setEditingNote}
+                                onPin={handleTogglePin}
+                                onArchive={handleToggleArchive}
+                                onTrash={handleMoveToTrash}
+                                onDuplicate={handleDuplicate}
+                                viewMode={viewMode}
+                              />
+                            ))}
                           </div>
                         </SortableContext>
                       </div>
@@ -1478,130 +1604,18 @@ export default function PulseKeep() {
                         )}
                         <SortableContext items={otherNotes.map(n => n.id)} strategy={rectSortingStrategy}>
                           <div className="divide-y">
-                            {otherNotes.map(note => {
-                              const colorStyle = NOTE_COLORS[note.color] || NOTE_COLORS.default;
-                              const wikiInfo = parseWikiTitle(note.title);
-                              return (
-                                <div
-                                  key={note.id}
-                                  className={`p-3 cursor-pointer hover:bg-muted/50 transition-colors ${colorStyle.bg} ${editingNote?.id === note.id ? "ring-2 ring-amber-500 ring-inset" : ""}`}
-                                  onClick={() => setEditingNote(note)}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <h3 className="font-medium text-sm truncate flex items-center gap-1.5 flex-1">
-                                      {wikiInfo.isWiki ? (
-                                        <>
-                                          <BookOpen className="h-3 w-3 text-cyan-600 flex-shrink-0" />
-                                          <span className="truncate">{wikiInfo.contact}</span>
-                                          {wikiInfo.version && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 font-medium flex-shrink-0">
-                                              {wikiInfo.version}
-                                            </span>
-                                          )}
-                                        </>
-                                      ) : (
-                                        <span className="truncate">{note.title || "Senza titolo"}</span>
-                                      )}
-                                      {note.reminder && <BellRing className="h-3 w-3 text-orange-500 flex-shrink-0" />}
-                                    </h3>
-                                    {wikiInfo.isWiki && activeTab === "wiki" && (
-                                      <DropdownMenu open={moveToFolderOpen === note.id} onOpenChange={(open) => setMoveToFolderOpen(open ? note.id : null)}>
-                                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                                          <Button variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0">
-                                            <MoreVertical className="h-3 w-3" />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" className="w-56" onClick={(e) => e.stopPropagation()}>
-                                          <DropdownMenuItem className="text-xs" onClick={() => handleDuplicate(note)}>
-                                            <Copy className="h-3 w-3 mr-2" /> Duplica qui
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                          <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground flex items-center gap-1">
-                                            <Tag className="h-3 w-3" /> Etichette:
-                                          </div>
-                                          {keepLabels.length > 0 ? (
-                                            <div className="px-2 pb-2 flex flex-wrap gap-1">
-                                              {keepLabels.map(label => {
-                                                const isAssigned = note.labels?.includes(label.id);
-                                                return (
-                                                  <button
-                                                    key={label.id}
-                                                    onClick={() => toggleLabelOnNote(note.id, label.id)}
-                                                    className={`text-[9px] px-2 py-1 rounded-full font-medium transition-all ${isAssigned
-                                                      ? "text-white ring-2 ring-offset-1 ring-black/20"
-                                                      : "text-white/70 opacity-50 hover:opacity-100"
-                                                      }`}
-                                                    style={{ backgroundColor: label.color }}
-                                                  >
-                                                    {isAssigned && <Check className="h-2 w-2 inline mr-0.5" />}
-                                                    {label.name}
-                                                  </button>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : (
-                                            <div className="px-2 py-1 text-[10px] text-muted-foreground">
-                                              Nessuna etichetta
-                                            </div>
-                                          )}
-                                          <DropdownMenuItem
-                                            className="text-xs text-cyan-600"
-                                            onClick={() => setLabelDialogOpen(true)}
-                                          >
-                                            <Plus className="h-3 w-3 mr-2" /> Gestisci etichette
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                          <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground">Copia in:</div>
-                                          {availableWikiFolders.filter(f => f !== wikiInfo.contact).map(folder => (
-                                            <DropdownMenuItem key={`copy-${folder}`} className="text-xs" onClick={() => handleCopyToFolder(note, folder)}>
-                                              <Copy className="h-3 w-3 mr-2 text-green-600" /> {folder}
-                                            </DropdownMenuItem>
-                                          ))}
-                                          <DropdownMenuSeparator />
-                                          <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground">Sposta in:</div>
-                                          {availableWikiFolders.filter(f => f !== wikiInfo.contact).map(folder => (
-                                            <DropdownMenuItem key={`move-${folder}`} className="text-xs" onClick={() => handleMoveToFolder(note, folder)}>
-                                              <FolderInput className="h-3 w-3 mr-2 text-blue-600" /> {folder}
-                                            </DropdownMenuItem>
-                                          ))}
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem className="text-xs text-red-600" onClick={() => softDeleteMutation.mutate(note.id)}>
-                                            <Trash2 className="h-3 w-3 mr-2" /> Elimina
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    )}
-                                  </div>
-                                  {wikiInfo.isWiki ? (
-                                    <div className="flex flex-col gap-1 mt-1">
-                                      <div className="flex items-center gap-2">
-                                        {wikiInfo.date && (
-                                          <span className="text-[10px] text-muted-foreground">{wikiInfo.date}</span>
-                                        )}
-                                      </div>
-                                      {/* Etichette colorate */}
-                                      {getNoteLabels(note).length > 0 && (
-                                        <div className="flex flex-wrap gap-1">
-                                          {getNoteLabels(note).map(label => (
-                                            <span
-                                              key={label.id}
-                                              className="text-[9px] px-1.5 py-0.5 rounded-full text-white font-medium"
-                                              style={{ backgroundColor: label.color }}
-                                            >
-                                              {label.name}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-2 mt-1">
-                                      <p className="text-xs text-muted-foreground truncate flex-1">{note.content}</p>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
+                            {otherNotes.map(note => (
+                              <SortableNoteCard
+                                key={note.id}
+                                note={note}
+                                onEdit={setEditingNote}
+                                onPin={handleTogglePin}
+                                onArchive={handleToggleArchive}
+                                onTrash={handleMoveToTrash}
+                                onDuplicate={handleDuplicate}
+                                viewMode={viewMode}
+                              />
+                            ))}
                           </div>
                         </SortableContext>
                       </div>
@@ -1850,6 +1864,7 @@ export default function PulseKeep() {
 
                   <ScrollArea className={`flex-1 ${NOTE_COLORS[editingNote.color]?.bg || ""}`}>
                     <div className="p-6 space-y-4">
+
                       <Input
                         placeholder="Titolo"
                         value={editingNote.title || ""}
@@ -1860,12 +1875,124 @@ export default function PulseKeep() {
                           }`}
                       />
 
+                      {/* Formatting Toolbar */}
+                      <div className="flex items-center gap-1 border-b pb-2 mb-2">
+                        {/* Link Dialog */}
+                        <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+                          <DialogTrigger asChild>
+                            <button
+                              type="button"
+                              className="p-2 rounded hover:bg-muted transition-colors"
+                              title="Inserisci link"
+                            >
+                              <LinkIcon className="h-4 w-4" />
+                            </button>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                              <DialogTitle>Inserisci Link</DialogTitle>
+                            </DialogHeader>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <Label>Testo</Label>
+                                <Input
+                                  value={linkText}
+                                  onChange={(e) => setLinkText(e.target.value)}
+                                  placeholder="Testo del link"
+                                  onKeyDown={(e) => e.key === "Enter" && insertLink()}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>URL</Label>
+                                <Input
+                                  value={linkUrl}
+                                  onChange={(e) => setLinkUrl(e.target.value)}
+                                  placeholder="https://..."
+                                  onKeyDown={(e) => e.key === "Enter" && insertLink()}
+                                />
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>
+                                  Annulla
+                                </Button>
+                                <Button onClick={insertLink} disabled={!linkText.trim() || !linkUrl.trim()}>
+                                  Inserisci
+                                </Button>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+
+                        {/* Image Dialog */}
+                        <Dialog open={imageDialogOpen} onOpenChange={setImageDialogOpen}>
+                          <DialogTrigger asChild>
+                            <button
+                              type="button"
+                              className="p-2 rounded hover:bg-muted transition-colors"
+                              title="Inserisci immagine"
+                            >
+                              <ImageIcon className="h-4 w-4" />
+                            </button>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                              <DialogTitle>Inserisci Immagine</DialogTitle>
+                            </DialogHeader>
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <Label>Sorgente Immagine</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={imageUrlInline}
+                                    onChange={(e) => setImageUrlInline(e.target.value)}
+                                    placeholder="https://..."
+                                    className="flex-1"
+                                    onKeyDown={(e) => e.key === "Enter" && insertImage()}
+                                  />
+                                  <Button
+                                    variant="secondary"
+                                    onClick={() => fileInputInlineRef.current?.click()}
+                                    title="Carica dal dispositivo"
+                                  >
+                                    <Upload className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">Incolla un URL o carica un'immagine dal tuo dispositivo.</p>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Testo alternativo (opzionale)</Label>
+                                <Input
+                                  value={imageAlt}
+                                  onChange={(e) => setImageAlt(e.target.value)}
+                                  placeholder="Descrizione immagine"
+                                />
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <Button variant="outline" onClick={() => setImageDialogOpen(false)}>
+                                  Annulla
+                                </Button>
+                                <Button onClick={insertImage} disabled={!imageUrlInline.trim()}>
+                                  Inserisci
+                                </Button>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+
                       <Textarea
+                        ref={textareaRef}
                         placeholder="Scrivi la tua nota..."
                         value={editingNote.content || ""}
                         onChange={(e) => setEditingNote({ ...editingNote, content: e.target.value })}
                         className="min-h-[400px] resize-none border-none focus-visible:ring-0 px-0 bg-transparent text-sm"
                       />
+                      {editingNote.content && (
+                        <div className="mt-6 border-t pt-4 opacity-80">
+                          <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Anteprima</div>
+                          <RenderMarkdown content={editingNote.content} />
+                        </div>
+                      )}
                     </div>
                   </ScrollArea>
 
@@ -1931,6 +2058,15 @@ export default function PulseKeep() {
         ref={audioRef}
         onEnded={() => setIsPlaying(false)}
         className="hidden"
+      />
+
+      {/* Hidden file input for inline images */}
+      <input
+        type="file"
+        ref={fileInputInlineRef}
+        onChange={handleInlineImageUpload}
+        className="hidden"
+        accept="image/*"
       />
 
       {/* Book Viewer for Wiki notes */}

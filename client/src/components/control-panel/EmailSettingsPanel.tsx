@@ -167,7 +167,9 @@ export default function EmailSettingsPanel() {
   const { data: accounts, isLoading } = useQuery({
     queryKey: ["user-email-config"],
     queryFn: async () => {
-      const res = await fetch("/api/user-email-config");
+      const res = await fetch("/api/user-email-config", {
+        headers: { "x-user-id": user?.id || "" }
+      });
       if (!res.ok) return [];
       return res.json() as Promise<EmailConfig[]>;
     },
@@ -256,7 +258,10 @@ export default function EmailSettingsPanel() {
 
       const res = await fetch(url, {
         method: method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": user?.id || ""
+        },
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error("Errore nel salvataggio");
@@ -282,7 +287,10 @@ export default function EmailSettingsPanel() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/user-email-config/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/user-email-config/${id}`, {
+        method: "DELETE",
+        headers: { "x-user-id": user?.id || "" }
+      });
       if (!res.ok) throw new Error("Errore nell'eliminazione");
     },
     onSuccess: () => {
@@ -314,7 +322,10 @@ export default function EmailSettingsPanel() {
     try {
       const res = await fetch("/api/user-email-config/test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": user?.id || ""
+        },
         body: JSON.stringify(config),
       });
       if (!res.ok) {

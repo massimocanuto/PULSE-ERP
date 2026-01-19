@@ -1657,9 +1657,10 @@ export default function Finanza() {
     queryKey: ["/api/finance/accounts"],
   });
 
-  const { data: invoices = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
+  const { data: rawInvoices = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
     queryKey: ["/api/finance/invoices"],
   });
+  const invoices = Array.isArray(rawInvoices) ? rawInvoices : [];
 
   const { data: transactions = [], isLoading: transactionsLoading } = useQuery<FinanceTransaction[]>({
     queryKey: ["/api/finance/transactions"],

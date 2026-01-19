@@ -66,11 +66,13 @@ export default function Projects() {
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: projectsApi.getAll,
+    enabled: !!user?.id,
   });
 
   const { data: tasks = [] } = useQuery({
     queryKey: ["tasks"],
     queryFn: tasksApi.getAll,
+    enabled: !!user?.id,
   });
 
   const { data: projectChannel } = useQuery({
@@ -601,8 +603,8 @@ export default function Projects() {
                                               const isUrgent = daysLeft >= 0 && daysLeft <= 3;
                                               return (
                                                 <span className={`text-[10px] flex items-center gap-1 font-medium ${isOverdue ? 'text-red-600' :
-                                                    isUrgent ? 'text-orange-600' :
-                                                      'text-muted-foreground'
+                                                  isUrgent ? 'text-orange-600' :
+                                                    'text-muted-foreground'
                                                   }`}>
                                                   <Clock className="h-3 w-3" />
                                                   {isOverdue
@@ -944,8 +946,8 @@ export default function Projects() {
                               {msg.senderName} • {msg.createdAt && format(new Date(msg.createdAt), "HH:mm")}
                             </div>
                             <div className={`rounded-2xl px-3 py-2 text-sm shadow-sm ${msg.senderId === user?.id
-                                ? 'bg-stone-800 text-white rounded-tr-none'
-                                : 'bg-white border text-foreground rounded-tl-none'
+                              ? 'bg-stone-800 text-white rounded-tr-none'
+                              : 'bg-white border text-foreground rounded-tl-none'
                               }`}>
                               {msg.content}
                             </div>

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
-import { createInsertSchema } from "./drizzle-zod-shim";
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Users table
@@ -15,6 +15,8 @@ export const users = sqliteTable("users", {
   status: text("status").notNull().default("Active"),
   avatar: text("avatar"),
   allowedIp: text("allowed_ip"),
+  googleAccessToken: text("google_access_token"),
+  googleRefreshToken: text("google_refresh_token"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -443,11 +445,30 @@ export const personalTodos = sqliteTable("personal_todos", {
   googleCalendarEventId: text("google_calendar_event_id"),
   googleCalendarId: text("google_calendar_id"),
   createdAt: text("created_at"),
+  updatedAt: text("updated_at"),
 });
 
 export const insertPersonalTodoSchema = createInsertSchema(personalTodos).omit({ id: true, createdAt: true });
 export type InsertPersonalTodo = z.infer<typeof insertPersonalTodoSchema>;
 export type PersonalTodo = typeof personalTodos.$inferSelect;
+
+// User Alarm Settings table - for personal alarm/briefing configuration
+export const userAlarmSettings = sqliteTable("user_alarm_settings", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  alarmTime: text("alarm_time").notNull().default("07:00"),
+  selectedDays: text("selected_days", { mode: "json" }).$type<string[]>().default("[]"),
+  useOpenAI: integer("use_openai", { mode: "boolean" }).default(false),
+  openAIKey: text("openai_key"),
+  selectedVoice: text("selected_voice").default("default"),
+  createdAt: text("created_at"),
+  updatedAt: text("updated_at"),
+});
+
+export const insertUserAlarmSettingsSchema = createInsertSchema(userAlarmSettings).omit({ id: true, createdAt: true });
+export type InsertUserAlarmSettings = z.infer<typeof insertUserAlarmSettingsSchema>;
+export type UserAlarmSettings = typeof userAlarmSettings.$inferSelect;
+
 
 // Subtasks table - for breaking down todos into smaller steps
 export const subtasks = sqliteTable("subtasks", {
@@ -768,9 +789,7 @@ export const userWhatsappConfigs = sqliteTable("user_whatsapp_configs", {
   updatedAt: text("updated_at"),
 });
 
-export const insertOfficeDocumentSchema = createInsertSchema(officeDocuments).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertOfficeDocument = z.infer<typeof insertOfficeDocumentSchema>;
-export type OfficeDocument = typeof officeDocuments.$inferSelect; export const insertUserWhatsappConfigSchema = createInsertSchema(userWhatsappConfigs).omit({ id: true, createdAt: true, updatedAt: true, lastConnectedAt: true });
+export const insertUserWhatsappConfigSchema = createInsertSchema(userWhatsappConfigs).omit({ id: true, createdAt: true, updatedAt: true, lastConnectedAt: true });
 export type InsertUserWhatsappConfig = z.infer<typeof insertUserWhatsappConfigSchema>;
 export type UserWhatsappConfig = typeof userWhatsappConfigs.$inferSelect;
 
@@ -3019,3 +3038,95 @@ export const officeDocuments = sqliteTable("office_documents", {
   updatedAt: text("updated_at"),
 });
 
+export const insertOfficeDocumentSchema = createInsertSchema(officeDocuments).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertOfficeDocument = z.infer<typeof insertOfficeDocumentSchema>;
+export type OfficeDocument = typeof officeDocuments.$inferSelect;
+
+
+
+
+
+
+// Pulse Library - Book Management
+export const books = sqliteTable("books", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id),
+
+  // Book Metadata
+  isbn: text("isbn"),
+  title: text("title").notNull(),
+  author: text("author").notNull(),
+  coverUrl: text("cover_url"),
+  description: text("description"),
+  totalPages: integer("total_pages").default(0),
+  publisher: text("publisher"),
+  publishedDate: text("published_date"),
+  categories: text("categories"), // JSON array string
+  language: text("language").default("it"),
+
+  // User Status
+  status: text("status").default("to_read"), // to_read, reading, completed, abandoned
+  currentPage: integer("current_page").default(0),
+  rating: integer("rating"), // 1-5
+  startedAt: text("started_at"),
+  finishedAt: text("finished_at"),
+
+  // Integration
+  format: text("format"), // physical, ebook, audiobook
+  associatedKeepNoteId: text("keep_note_id"),
+  filePath: text("file_path"), // Path to the uploaded file
+  fileType: text("file_type"), // pdf, epub, etc.
+
+  createdAt: text("created_at"),
+  updatedAt: text("updated_at"),
+});
+
+export const insertBookSchema = createInsertSchema(books).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBook = z.infer<typeof insertBookSchema>;
+export type Book = typeof books.$inferSelect;
+
+// Reading Sessions (for statistics)
+export const readingSessions = sqliteTable("reading_sessions", {
+  id: text("id").primaryKey(),
+  bookId: text("book_id").notNull().references(() => books.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => users.id),
+  date: text("date").notNull(),
+  pagesRead: integer("pages_read").notNull(),
+  durationMinutes: integer("duration_minutes"),
+  notes: text("notes"),
+  createdAt: text("created_at"),
+});
+
+export const insertReadingSessionSchema = createInsertSchema(readingSessions).omit({ id: true, createdAt: true });
+export type InsertReadingSession = z.infer<typeof insertReadingSessionSchema>;
+export type ReadingSession = typeof readingSessions.$inferSelect;
+
+// Contacts table
+export const contacts = sqliteTable("contacts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  googleId: text("google_id").unique(),
+  resourceName: text("resource_name"),
+  etag: text("etag"),
+  givenName: text("given_name"),
+  familyName: text("family_name"),
+  email: text("email"),
+  phone: text("phone"),
+  company: text("company"),
+  jobTitle: text("job_title"),
+  notes: text("notes"),
+  birthday: text("birthday"),
+  lastSyncedAt: text("last_synced_at"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  deletedAt: text("deleted_at"),
+});
+
+export const insertContactSchema = createInsertSchema(contacts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  lastSyncedAt: true,
+});
+export type InsertContact = z.infer<typeof insertContactSchema>;
+export type Contact = typeof contacts.$inferSelect;

@@ -12,7 +12,7 @@ import {
   TrendingUp, Target, Loader2, Check, X, Edit2, MoreVertical,
   Briefcase, ListTodo, Zap, BarChart3, Users, FileText, Sparkles,
   Cloud, CloudRain, Sun, CloudSnow, Wind, AlertCircle, Bell,
-  StickyNote, Save, TrendingDown, ArrowUp, ArrowDown, Minus, Mail, ExternalLink
+  StickyNote, Save, TrendingDown, ArrowUp, ArrowDown, Minus, Mail, ExternalLink, Book, Gift
 } from "lucide-react";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
@@ -30,6 +30,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { BriefingWidget } from "@/components/dashboard/BriefingWidget";
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
@@ -79,7 +80,7 @@ export default function Dashboard() {
     queryKey: ["recent-emails", authUser?.id],
     queryFn: async () => {
       if (!authUser?.id) return [];
-      const res = await fetch("/api/emails?limit=10", {
+      const res = await fetch("/api/emails?limit=10&unread=true", {
         headers: { "x-user-id": authUser.id }
       });
       if (!res.ok) throw new Error("Failed to fetch emails");
@@ -108,7 +109,19 @@ export default function Dashboard() {
   const { data: projects = [], isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: projectsApi.getAll,
+    enabled: !!authUser?.id,
   });
+
+  const { data: books = [] } = useQuery({
+    queryKey: ["books"],
+    queryFn: async () => {
+      const res = await fetch("/api/books");
+      if (!res.ok) throw new Error("Failed to fetch books");
+      return res.json();
+    }
+  });
+
+  const currentBook = books.find((b: any) => b.status === "reading");
 
   const createTodoMutation = useMutation({
     mutationFn: personalTodosApi.create,
@@ -194,7 +207,12 @@ export default function Dashboard() {
   };
 
   const handleEditClick = (todo: any) => {
-    setEditingTodo(todo);
+    const date = todo.dueDate ? new Date(todo.dueDate) : new Date();
+    setEditingTodo({
+      ...todo,
+      dateVal: todo.dueDate ? format(date, 'yyyy-MM-dd') : '',
+      timeVal: todo.dueDate ? format(date, 'HH:mm') : ''
+    });
     setIsEditDialogOpen(true);
   };
 
@@ -234,7 +252,7 @@ export default function Dashboard() {
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
     });
   const completedTodos = todos.filter((t: any) => t.completed);
-  const activeProjects = projects.filter((p: any) => p.status === "In Progress");
+  const activeProjects = projects.filter((p: any) => p.status === "In Progress" || p.status === "Not Started");
   const todayTodos = todos.filter((t: any) => {
     if (!t.dueDate) return false;
     const today = new Date().toISOString().split('T')[0];
@@ -302,6 +320,43 @@ export default function Dashboard() {
     wind: 12
   };
 
+  /* RE-ENABLED: Contacts Query (Safe) */
+  const { data: contacts = [] } = useQuery({
+    queryKey: ["contacts", authUser?.id],
+    queryFn: async () => {
+      if (!authUser?.id) return [];
+      try {
+        const res = await fetch(`/api/contacts?userId=${authUser.id}`, {
+          headers: { "x-user-id": authUser.id },
+          credentials: "include"
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch (e) {
+        console.error("Fetch contacts error:", e);
+        return [];
+      }
+    },
+    enabled: !!authUser?.id,
+    initialData: []
+  });
+
+  /* RE-ENABLED: Upcoming Birthdays (Safe) */
+  const upcomingBirthdays = Array.isArray(contacts) ? contacts.filter((c: any) => {
+    try {
+      if (!c || !c.birthday) return false;
+      const today = new Date();
+      const bday = new Date(c.birthday);
+      if (isNaN(bday.getTime())) return false;
+      const currentYearBday = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());
+      const isToday = currentYearBday.getDate() === today.getDate() && currentYearBday.getMonth() === today.getMonth();
+      return isToday;
+    } catch (e) {
+      return false;
+    }
+  }) : [];
+
   return (
     <>
       <AppLayout>
@@ -325,7 +380,10 @@ export default function Dashboard() {
                 </div>
                 {/* Live Clock & Weather Widget */}
                 <div className="flex gap-3">
-                  <div className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/30">
+                  <div
+                    className="bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/30 cursor-default"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <div className="flex items-center gap-2">
                       <CalendarIcon className="h-4 w-4" />
                       <span className="text-lg font-mono font-bold">
@@ -427,11 +485,24 @@ export default function Dashboard() {
             </div>
           </div>
 
+
           {/* Main Content */}
           <div className="px-4 py-8 -mt-4">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Column - Alerts & Weekly Chart */}
+              {/* Left Column - Alerts & Daily Briefing */}
               <div className="lg:col-span-3 space-y-6">
+
+                {/* Briefing Widget */}
+                <BriefingWidget
+                  userName={authUser?.name || "Massimo"}
+                  data={{
+                    unreadEmails: unreadEmailsCount,
+                    tasksDueToday: todayTodos.length,
+                    overdueTasks: overdue.length,
+                    weather: weatherData
+                  }}
+                />
+
                 {/* Alerts Widget */}
                 <Card className="shadow-lg border-0 bg-white/80 backdrop-blur">
                   <CardHeader className="border-b bg-gradient-to-r from-amber-50 to-orange-50 py-3">
@@ -441,6 +512,21 @@ export default function Dashboard() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-3 space-y-2">
+                    {upcomingBirthdays.length > 0 && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 cursor-pointer hover:bg-purple-100 transition-colors">
+                        <div className="flex items-start gap-2">
+                          <Gift className="h-4 w-4 text-purple-600 mt-0.5 flex-shrink-0" />
+                          <div className="flex-1">
+                            <p className="text-xs font-bold text-purple-900">
+                              Compleanno Rilevato! 🎂
+                            </p>
+                            <p className="text-[10px] text-purple-700 mt-1">
+                              Controlla la lista contatti per i dettagli.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {unreadEmailsCount > 0 && (
                       <Link href="/email">
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 cursor-pointer hover:bg-blue-100 transition-colors">
@@ -503,54 +589,8 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
 
-                {/* Weekly Productivity Chart */}
-                <Card className="shadow-lg border-0 bg-white/80 backdrop-blur">
-                  <CardHeader className="border-b bg-gradient-to-r from-cyan-50 to-blue-50 py-3">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4 text-cyan-600" />
-                      Produttività Settimanale
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-4">
-                    <div className="space-y-2">
-                      {weeklyData.map((data, index) => {
-                        const date = new Date(data.day);
-                        const dayName = date.toLocaleDateString('it-IT', { weekday: 'short' });
-                        const percentage = (data.completed / maxCompleted) * 100;
-
-                        return (
-                          <div key={data.day} className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-muted-foreground uppercase">
-                                {dayName}
-                              </span>
-                              <span className="text-xs font-bold text-purple-600">
-                                {data.completed}
-                              </span>
-                            </div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
-                                style={{ width: `${percentage}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-4 pt-3 border-t">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Media giornaliera</span>
-                        <span className="font-bold text-cyan-600">
-                          {(weeklyData.reduce((acc, d) => acc + d.completed, 0) / 7).toFixed(1)} task
-                        </span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
                 {/* Sticky Notes Widget */}
-                <Card className="shadow-lg border-0 bg-gradient-to-br from-yellow-50 to-amber-50">
+                <Card className="shadow-lg border border-yellow-200 bg-yellow-50">
                   <CardHeader className="border-b border-yellow-200 py-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm flex items-center gap-2">
@@ -600,7 +640,93 @@ export default function Dashboard() {
                     </div>
                   </CardContent>
                 </Card>
-              </div>
+
+                {/* Current Reading Widget */}
+                {currentBook && (
+                  <Card className="shadow-lg border-0 bg-white/80 backdrop-blur">
+                    <CardHeader className="border-b bg-gradient-to-r from-amber-50 to-orange-50 py-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Book className="h-4 w-4 text-amber-600" />
+                        In Lettura
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3">
+                      <div className="flex gap-3">
+                        <div className="h-16 w-12 bg-gray-200 rounded flex-shrink-0 overflow-hidden">
+                          {currentBook.coverUrl ? (
+                            <img src={currentBook.coverUrl} className="h-full w-full object-cover" alt="Cover" />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center bg-amber-100">
+                              <Book className="h-4 w-4 text-amber-600/40" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-sm truncate" title={currentBook.title}>{currentBook.title}</h4>
+                          <p className="text-xs text-muted-foreground truncate">{currentBook.author}</p>
+                          <div className="mt-2 space-y-1">
+                            <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-amber-500 rounded-full"
+                                style={{ width: `${Math.round(((currentBook.currentPage || 0) / (currentBook.totalPages || 1)) * 100)}%` }}
+                              />
+                            </div>
+                            <div className="flex justify-between text-[10px] text-muted-foreground">
+                              <span>{Math.round(((currentBook.currentPage || 0) / (currentBook.totalPages || 1)) * 100)}%</span>
+                              <Link href="/library" className="text-amber-600 hover:underline">Aggiorna</Link>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Weekly Productivity Chart */}
+                <Card className="shadow-lg border-0 bg-white/80 backdrop-blur">
+                  <CardHeader className="border-b bg-gradient-to-r from-cyan-50 to-blue-50 py-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-cyan-600" />
+                      Produttività Settimanale
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4">
+                    <div className="space-y-2">
+                      {weeklyData.map((data, index) => {
+                        const date = new Date(data.day);
+                        const dayName = date.toLocaleDateString('it-IT', { weekday: 'short' });
+                        const percentage = (data.completed / maxCompleted) * 100;
+
+                        return (
+                          <div key={data.day} className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-medium text-muted-foreground uppercase">
+                                {dayName}
+                              </span>
+                              <span className="text-xs font-bold text-purple-600">
+                                {data.completed}
+                              </span>
+                            </div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
+                                style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 pt-3 border-t">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Media giornaliera</span>
+                        <span className="font-bold text-cyan-600">
+                          {(weeklyData.reduce((acc, d) => acc + d.completed, 0) / 7).toFixed(1)} task
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>              </div>
 
               {/* Center Column - To-Do List & Email */}
               <div className="lg:col-span-6 space-y-6">
@@ -790,7 +916,20 @@ export default function Dashboard() {
                                       <Button size="sm" variant="ghost" onClick={() => setEditingTodo(null)} className="h-7 w-7 p-0">
                                         <X className="h-4 w-4 text-red-500" />
                                       </Button>
-                                      <Button size="sm" variant="ghost" onClick={handleSaveEdit} className="h-7 w-7 p-0">
+                                      <Button size="sm" variant="ghost" onClick={() => {
+                                        if (!editingTodo) return;
+                                        let newDate = editingTodo.dueDate;
+                                        if (editingTodo.dateVal && editingTodo.timeVal) {
+                                          const d = new Date(editingTodo.dateVal);
+                                          const [h, m] = editingTodo.timeVal.split(':');
+                                          d.setHours(parseInt(h), parseInt(m));
+                                          newDate = d.toISOString();
+                                        }
+                                        handleSaveEdit(editingTodo.id, {
+                                          title: editingTodo.title,
+                                          dueDate: newDate
+                                        });
+                                      }} className="h-7 w-7 p-0">
                                         <Check className="h-4 w-4 text-green-500" />
                                       </Button>
                                     </div>
@@ -911,10 +1050,9 @@ export default function Dashboard() {
                         <AlertCircle className="h-5 w-5 mx-auto mb-2" />
                         <p className="text-xs font-medium">{recentEmails.error}</p>
                       </div>
-                    ) : Array.isArray(recentEmails) && recentEmails.length > 0 ? (
+                    ) : recentEmails?.emails && Array.isArray(recentEmails.emails) && recentEmails.emails.length > 0 ? (
                       <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
-                        {recentEmails
-                          .slice(0, 10)
+                        {recentEmails.emails
                           .slice(0, 10)
                           .map((email: any) => (
                             <div key={email.id} className="p-3 hover:bg-indigo-50/50 transition-colors group cursor-pointer" onClick={() => navigate(`/communications?emailId=${email.id}`)}>
@@ -926,7 +1064,7 @@ export default function Dashboard() {
                                   {format(new Date(email.receivedAt), "d MMM HH:mm", { locale: it })}
                                 </span>
                               </div>
-                              <p className="text-xs text-gray-700 font-medium truncate mb-0.5">
+                              <p className="text-xs text-gray-700 font-medium truncate mb-0.5 max-w-[200px]">
                                 {email.subject || "(Nessun oggetto)"}
                               </p>
                               <p className="text-[10px] text-muted-foreground line-clamp-1">
@@ -947,7 +1085,9 @@ export default function Dashboard() {
                     {/* Status Footer */}
                     <div className="bg-gray-50/50 border-t p-2 flex justify-between items-center text-[10px] text-muted-foreground">
                       <span>
-                        {recentEmails?.configured ? (
+                        {emailsLoading ? (
+                          <span className="text-muted-foreground">Verifica...</span>
+                        ) : recentEmails?.configured ? (
                           <>Account: <span className="font-medium text-indigo-700">Attivo</span></>
                         ) : (
                           <Link href="/control-panel?tab=email" className="text-red-500 hover:underline flex items-center gap-1">

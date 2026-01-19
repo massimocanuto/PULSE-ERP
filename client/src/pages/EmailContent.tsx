@@ -153,6 +153,7 @@ export default function EmailContent() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [, setLocation] = useLocation();
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [projectPopup, setProjectPopup] = useState<{ open: boolean; projectId: string | null; projectTitle: string | null }>({ open: false, projectId: null, projectTitle: null });
@@ -241,6 +242,7 @@ export default function EmailContent() {
       if (!res.ok) return [];
       return res.json();
     },
+    enabled: !!user?.id,
   });
 
   // Set default account when configs load
@@ -265,7 +267,7 @@ export default function EmailContent() {
       if (!res.ok) throw new Error("Errore caricamento contatti");
       return res.json();
     },
-    enabled: wikiDialogOpen,
+    enabled: wikiDialogOpen && !!user?.id,
   });
 
   // Stato per il progresso del Wiki
@@ -469,7 +471,7 @@ export default function EmailContent() {
     });
   };
 
-  const { user } = useAuth();
+
 
 
   const toggleSelectAll = () => {
@@ -588,12 +590,13 @@ export default function EmailContent() {
   const { data: status } = useQuery({
     queryKey: ["aruba-status"],
     queryFn: fetchArubaStatus,
-    enabled: !isUserConfigured,
+    enabled: !isUserConfigured && !!user?.id,
   });
 
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],
     queryFn: projectsApi.getAll,
+    enabled: !!user?.id,
   });
 
   const { data: linkedEmails = [] } = useQuery({
@@ -603,6 +606,7 @@ export default function EmailContent() {
       if (!res.ok) return [];
       return res.json();
     },
+    enabled: !!user?.id,
   });
 
   const { data: emailLabels = [] } = useQuery<EmailLabel[]>({
@@ -766,6 +770,7 @@ export default function EmailContent() {
   const { data: foldersData, isLoading: loadingFolders } = useQuery({
     queryKey: ["aruba-folders", selectedAccountId],
     queryFn: () => fetchArubaFolders(selectedAccountId),
+    enabled: !!user?.id,
   });
 
   const { data: emailData, isLoading: loadingEmails, refetch, isRefetching } = useQuery({
@@ -774,6 +779,7 @@ export default function EmailContent() {
     // Pulisce la cache delle query quando cambia la cartella o l'account per evitare flash di email vecchie
     placeholderData: (previousData) => previousData,
     refetchInterval: 30000,
+    enabled: !!user?.id,
   });
 
   const folders = foldersData?.folders || [];
@@ -1919,6 +1925,9 @@ export default function EmailContent() {
             <table className="w-full text-xs">
               <thead className="bg-muted/50 sticky top-0">
                 <tr className="border-b border-border">
+                  <th style={{ width: '40px', minWidth: '40px' }} className="text-center py-2 px-3 font-medium text-muted-foreground text-xs whitespace-nowrap">
+                    <Paperclip className="h-3.5 w-3.5 mx-auto" />
+                  </th>
                   <th className="text-left py-2 px-2 font-medium text-muted-foreground text-xs whitespace-nowrap">
                     <div className="flex items-center gap-2">
                       <input
@@ -1938,9 +1947,6 @@ export default function EmailContent() {
                   </th>
                   <th style={{ width: '100px', minWidth: '100px' }} className="text-left py-2 px-3 font-medium text-muted-foreground text-xs whitespace-nowrap">
                     DATA
-                  </th>
-                  <th style={{ width: '40px', minWidth: '40px' }} className="text-center py-2 px-3 font-medium text-muted-foreground text-xs whitespace-nowrap">
-                    <Paperclip className="h-3.5 w-3.5 mx-auto" />
                   </th>
                 </tr>
               </thead>
@@ -1969,6 +1975,19 @@ export default function EmailContent() {
                         ${!isMultiSelected && selectedEmail?.id !== email.id && email.unread ? 'font-semibold' : ''}
                       `}
                       >
+                        <td style={{ width: '40px', minWidth: '40px' }} className="py-2 px-3 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {email.hasAttachments && (
+                              <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}
+                            <Button variant="ghost" size="sm" onClick={() => archiveEmailMutation.mutate([selectedEmailId])} title="Archivia" className="h-6 w-6 p-0 hover:bg-slate-200 rounded-full">
+                              <Archive className="h-3.5 w-3.5 text-muted-foreground" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteEmails([selectedEmailId])} title="Elimina" className="h-6 w-6 p-0 hover:bg-red-100 rounded-full">
+                              <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            </Button>
+                          </div>
+                        </td>
                         <td className="py-2 px-2 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <input
@@ -2082,28 +2101,6 @@ export default function EmailContent() {
                         <td style={{ width: '100px', minWidth: '100px' }} className="py-2 px-3 whitespace-nowrap text-muted-foreground overflow-hidden">
                           <span>{dateStr}</span>
                           <span className="ml-2 text-xs">{timeStr}</span>
-                        </td>
-                        <td style={{ width: '40px', minWidth: '40px' }} className="py-2 px-3 text-center">
-                          <Button variant="ghost" size="sm" onClick={() => archiveEmailMutation.mutate([selectedEmailId])} title="Archivia">
-                            <Archive className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => selectedEmail && handleConvertToTask(selectedEmail)} title="Crea Task">
-                            <CheckSquare className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteEmails([selectedEmailId])} title="Elimina" className="text-red-500 hover:text-red-600 hover:bg-white text-[11px] font-medium border border-transparent hover:border-red-100 flex items-center gap-1.5 shadow-sm rounded-lg transition-all duration-200">
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Elimina</span>
-                          </Button>
-                          {email.hasAttachments ? (
-                            <div className="flex items-center justify-center gap-1">
-                              <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
-                              {email.attachmentCount > 1 && (
-                                <span className="text-xs text-muted-foreground">{email.attachmentCount}</span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground/30">—</span>
-                          )}
                         </td>
                       </tr>
                     );

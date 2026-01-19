@@ -14,12 +14,18 @@ interface PersonalTodo {
   reminderSent?: boolean;
 }
 
+import { useAuth } from "@/contexts/AuthContext";
+import { personalTodosApi } from "@/lib/api";
+
 export function useNotifications() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const notifiedTodos = useRef<Set<string>>(new Set());
 
   const { data: todos = [] } = useQuery<PersonalTodo[]>({
-    queryKey: ["personal-todos"],
+    queryKey: ["personal-todos", user?.id],
+    queryFn: () => user ? personalTodosApi.getAll(user.id) : Promise.resolve([]),
+    enabled: !!user,
     refetchInterval: 30000,
   });
 
@@ -54,21 +60,8 @@ export function useNotifications() {
   }, []);
 
   const showNotification = useCallback((title: string, body: string, todoId: string) => {
-    if (Notification.permission === "granted") {
-      const notification = new Notification(title, {
-        body,
-        icon: "/favicon.ico",
-        tag: todoId,
-        requireInteraction: true,
-      });
-
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-
-      setTimeout(() => notification.close(), 10000);
-    }
+    // Browser notifications disabled
+    return;
   }, []);
 
   const checkReminders = useCallback(() => {
@@ -88,10 +81,10 @@ export function useNotifications() {
 
         if (now >= reminderTime && now < dueDate) {
           notifiedTodos.current.add(todo.id);
-          
+
           const minutesLeft = Math.round((dueDate.getTime() - now.getTime()) / 60000);
           let timeText = "";
-          
+
           if (minutesLeft < 60) {
             timeText = `${minutesLeft} minuti`;
           } else if (minutesLeft < 1440) {
@@ -113,7 +106,7 @@ export function useNotifications() {
   }, [todos, showNotification, markReminderSent]);
 
   useEffect(() => {
-    requestPermission();
+    // requestPermission(); // Disabled
   }, [requestPermission]);
 
   useEffect(() => {
@@ -146,8 +139,8 @@ export function useNotifications() {
     pendingReminders,
     activeReminders,
     requestPermission,
-    notificationPermission: typeof window !== "undefined" && "Notification" in window 
-      ? Notification.permission 
+    notificationPermission: typeof window !== "undefined" && "Notification" in window
+      ? Notification.permission
       : "denied",
   };
 }

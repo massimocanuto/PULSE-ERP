@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
 
-const ONLYOFFICE_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || "pulse_office_secret_key";
+const ONLYOFFICE_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || "secret";
 const ONLYOFFICE_SERVER_URL = process.env.ONLYOFFICE_SERVER_URL || "http://localhost:8080";
 
 export interface OnlyOfficeConfig {

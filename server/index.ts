@@ -1,6 +1,7 @@
-import "dotenv/config"; // restart-trigger-1718
+import "dotenv/config"; // restart-trigger-now
 import express from "express";
 import { createServer } from "http";
+import path from "path";
 
 const app = express();
 const httpServer = createServer(app);
@@ -79,7 +80,7 @@ async function initApp() {
         saveUninitialized: false,
         proxy: process.env.NODE_ENV === "production",
         cookie: {
-          secure: process.env.NODE_ENV === "production",
+          secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE === "true",
           httpOnly: true,
           maxAge: 7 * 24 * 60 * 60 * 1000,
           sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -90,6 +91,9 @@ async function initApp() {
     console.log('[DEBUG] Step 8: Setting up body parsers...');
     app.use(express.json({ verify: (req: any, _res, buf) => { req.rawBody = buf; } }));
     app.use(express.urlencoded({ extended: false }));
+
+    // Serve uploaded files
+    app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
     console.log('[DEBUG] Step 9: Setting up request logger...');
     app.use((req, res, next) => {
@@ -107,6 +111,9 @@ async function initApp() {
     await seedInitialUser();
 
     console.log('[DEBUG] Step 10: Registering routes...');
+    // Serve uploads directory - CRITICAL for uploaded images execution
+    app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
     await registerRoutes(httpServer, app);
 
     console.log('[DEBUG] Step 11: Setting up error handler...');

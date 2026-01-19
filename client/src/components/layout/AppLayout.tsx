@@ -86,6 +86,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDistanceToNow } from "date-fns";
 import { it } from "date-fns/locale";
 import { useNotifications } from "@/hooks/useNotifications";
+import { ReminderDialog } from "@/components/ReminderDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -269,12 +270,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
     refetchInterval: 30000, // Refresh every 30 seconds
+    enabled: !!user?.id,
   });
 
   // Fetch emails for notifications
   const { data: emails = [] } = useQuery<Email[]>({
     queryKey: ["/api/emails"],
     refetchInterval: 30000,
+    enabled: !!user?.id,
   });
 
   // Fetch share access notifications from database
@@ -316,13 +319,14 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const overdueTasks = tasks.filter((task) => {
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const overdueTasks = safeTasks.filter((task) => {
     if (task.done || !task.dueDate) return false;
     const dueDate = new Date(task.dueDate);
     return dueDate < today;
   });
 
-  const upcomingTasks = tasks.filter((task) => {
+  const upcomingTasks = safeTasks.filter((task) => {
     if (task.done || !task.dueDate) return false;
     const dueDate = new Date(task.dueDate);
     const threeDaysFromNow = new Date(today);
@@ -331,7 +335,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   });
 
   // Unread emails
-  const unreadEmails = emails.filter((email) => email.unread);
+  const safeEmails = Array.isArray(emails) ? emails : [];
+  const unreadEmails = safeEmails.filter((email) => email.unread);
 
   // Todo reminders
   const { activeReminders, notificationPermission, requestPermission } = useNotifications();
@@ -340,8 +345,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ["/api/projects"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
-  const activeProjects = projects.filter((p: any) => p.status === "active" || p.status === "in_progress");
+  const safeProjects = Array.isArray(projects) ? projects : [];
+  const activeProjects = safeProjects.filter((p: any) => p.status === "active" || p.status === "in_progress");
 
   // Fetch pending leave requests for HR Manager badge
   const { data: pendingLeaveRequests = [] } = useQuery<any[]>({
@@ -352,46 +359,55 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       return res.json();
     },
     refetchInterval: 30000,
+    enabled: !!user?.id,
   });
 
   // Fetch CRM leads for counters
   const { data: leads = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/leads"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
-  const newLeads = leads.filter((l: any) => l.status === "nuovo");
+  const safeLeads = Array.isArray(leads) ? leads : [];
+  const newLeads = safeLeads.filter((l: any) => l.status === "nuovo");
 
   // Fetch notes for Pulse Keep counter
   const { data: notes = [] } = useQuery<any[]>({
     queryKey: ["/api/notes"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
 
   // Fetch clienti for Anagrafiche counter
   const { data: clienti = [] } = useQuery<any[]>({
     queryKey: ["/api/anagrafica/clienti"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
 
   // Fetch personal todos for counter
   const { data: personalTodos = [] } = useQuery<any[]>({
     queryKey: ["/api/personal-todos"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
+  const safePersonalTodos = Array.isArray(personalTodos) ? personalTodos : [];
 
   // Fetch invoices for Finanza counter (only for authorized users)
   const { data: invoices = [] } = useQuery<any[]>({
     queryKey: ["/api/finance/invoices"],
     refetchInterval: 60000,
+    enabled: !!user?.id,
   });
-  const overdueInvoices = invoices.filter((inv: any) => {
+  const safeInvoices = Array.isArray(invoices) ? invoices : [];
+  const overdueInvoices = safeInvoices.filter((inv: any) => {
     if (!inv.dataScadenza || inv.stato === "pagata" || inv.stato === "annullata") return false;
     const scadenza = new Date(inv.dataScadenza);
     return scadenza < today;
   });
 
   // Calculate overdue personal todos
-  const overduePersonalTodos = personalTodos.filter((todo: any) => {
+  const overduePersonalTodos = safePersonalTodos.filter((todo: any) => {
     if (todo.completed || !todo.dueDate) return false;
     const dueDate = new Date(todo.dueDate);
     return dueDate < today;
@@ -434,21 +450,22 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const getMenuBadge = (url: string): { count?: number; alert?: boolean } => {
     switch (url) {
       case "/keep":
-        return { count: notes.length };
+        return { count: Array.isArray(notes) ? notes.length : 0 };
       case "/anagrafica":
-        return { count: clienti.length };
+        return { count: Array.isArray(clienti) ? clienti.length : 0 };
       case "/crm":
         return { count: newLeads.length, alert: newLeads.length > 0 };
       case "/communications":
         return { count: unreadEmails.length, alert: unreadEmails.length > 0 };
       case "/projects":
         const totalOverdue = overdueTasks.length + overduePersonalTodos.length;
-        const projectsAndTasksCount = projects.length + totalOverdue;
+        const projectsAndTasksCount = (Array.isArray(projects) ? projects.length : 0) + totalOverdue;
         return { count: projectsAndTasksCount, alert: totalOverdue > 0 };
       case "/finanza":
         return { count: overdueInvoices.length, alert: overdueInvoices.length > 0 };
       case "/hr-manager":
-        return { count: pendingLeaveRequests.length, alert: pendingLeaveRequests.length > 0 };
+        const pendingCount = Array.isArray(pendingLeaveRequests) ? pendingLeaveRequests.length : 0;
+        return { count: pendingCount, alert: pendingCount > 0 };
       default:
         return {};
     }
@@ -457,7 +474,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const allMenuItems = [
     { title: "Dashboard", icon: LayoutDashboard, url: "/" },
     { title: "Office Pulse", icon: FileText, url: "/office-pulse" },
-    { title: "Pulse Keep", icon: StickyNote, url: "/keep", separator: true },
+    { title: "Pulse Keep", icon: StickyNote, url: "/keep" },
+    { title: "Pulse Library", icon: BookOpen, url: "/library", separator: true },
     { title: "Anagrafiche", icon: BookUser, url: "/anagrafica" },
     { title: "CRM", icon: Target, url: "/crm" },
     { title: "Social & Marketing", icon: Megaphone, url: "/social-marketing" },
@@ -1014,6 +1032,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div >
       </SidebarProvider >
       <AIAssistant isOpen={isAIAssistantOpen} onClose={() => setIsAIAssistantOpen(false)} />
+      <ReminderDialog />
 
       <Dialog open={logoutDialogOpen} onOpenChange={setLogoutDialogOpen}>
         <DialogContent className="max-w-sm">

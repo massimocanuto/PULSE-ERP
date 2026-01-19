@@ -45,22 +45,35 @@ interface ProjectPanelProps {
   renderDocumentsTab: () => React.ReactNode;
 }
 
-function PanelHeader({ 
-  project, isEditing, editForm, setEditForm, setIsEditing, saveEdit, 
-  startEditing, handleShare, deleteProject, closePanel, getProgress 
+function getTeamMembers(members: any): string[] {
+  if (Array.isArray(members)) return members;
+  if (typeof members === 'string') {
+    try {
+      const parsed = JSON.parse(members);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+      console.warn("Failed to parse team members", e);
+      return [];
+    }
+  }
+  return [];
+}
+
+function PanelHeader({
+  project, isEditing, editForm, setEditForm, setIsEditing, saveEdit,
+  startEditing, handleShare, deleteProject, closePanel, getProgress
 }: any) {
   const progress = getProgress();
-  
+
   return (
     <div className="flex-shrink-0">
       <div className="px-4 py-3 bg-gradient-to-r from-violet-50/90 to-purple-50/90 border-b border-violet-100/50">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-md flex-shrink-0 ${
-              project?.status === 'Done' ? 'bg-gradient-to-br from-green-500 to-emerald-600' :
-              project?.status === 'In Progress' ? 'bg-gradient-to-br from-blue-500 to-indigo-600' : 
-              'bg-gradient-to-br from-gray-400 to-gray-500'
-            }`}>
+            <div className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-md flex-shrink-0 ${project?.status === 'Done' ? 'bg-gradient-to-br from-green-500 to-emerald-600' :
+              project?.status === 'In Progress' ? 'bg-gradient-to-br from-blue-500 to-indigo-600' :
+                'bg-gradient-to-br from-gray-400 to-gray-500'
+              }`}>
               <Briefcase className="h-5 w-5 text-white" />
             </div>
             <div className="flex-1 min-w-0">
@@ -76,10 +89,9 @@ function PanelHeader({
               )}
               {!isEditing && (
                 <div className="flex items-center gap-2 mt-1">
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                    project?.status === 'Done' ? 'bg-green-100 text-green-700' :
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${project?.status === 'Done' ? 'bg-green-100 text-green-700' :
                     project?.status === 'In Progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                  }`}>
+                    }`}>
                     {project?.status === 'Not Started' ? 'Da Iniziare' : project?.status === 'In Progress' ? 'In Corso' : 'Completato'}
                   </span>
                 </div>
@@ -121,12 +133,11 @@ function PanelHeader({
           <span className="font-semibold text-violet-600">{progress}%</span>
         </div>
         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-          <div 
-            className={`h-full rounded-full transition-all duration-500 ${
-              progress === 100 ? 'bg-gradient-to-r from-green-500 to-emerald-500' :
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${progress === 100 ? 'bg-gradient-to-r from-green-500 to-emerald-500' :
               progress > 50 ? 'bg-gradient-to-r from-violet-500 to-purple-500' :
-              'bg-gradient-to-r from-blue-500 to-violet-500'
-            }`}
+                'bg-gradient-to-r from-blue-500 to-violet-500'
+              }`}
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -137,7 +148,7 @@ function PanelHeader({
 
 export function DefaultLayout(props: ProjectPanelProps) {
   const { project, tasks, isEditing, editForm, setEditForm, activeTab, setActiveTab } = props;
-  
+
   return (
     <>
       <PanelHeader {...props} />
@@ -202,16 +213,16 @@ export function DefaultLayout(props: ProjectPanelProps) {
             <>
               <div className="flex items-center gap-2 mb-4">
                 <span className={`px-2 py-0.5 rounded text-xs font-medium 
-                  ${project.status === 'Not Started' ? 'bg-neutral-200 text-neutral-700' : 
-                    project.status === 'In Progress' ? 'bg-blue-100 text-blue-700' : 
-                    'bg-green-100 text-green-700'}
+                  ${project.status === 'Not Started' ? 'bg-neutral-200 text-neutral-700' :
+                    project.status === 'In Progress' ? 'bg-blue-100 text-blue-700' :
+                      'bg-green-100 text-green-700'}
                 `}>
                   {project.status === 'Not Started' ? 'Da Iniziare' : project.status === 'In Progress' ? 'In Corso' : 'Completato'}
                 </span>
                 <span className={`text-xs px-1.5 py-0.5 rounded border 
-                  ${project.priority === 'High' ? 'bg-red-50 text-red-700 border-red-100' : 
-                    project.priority === 'Medium' ? 'bg-orange-50 text-orange-700 border-orange-100' : 
-                    'bg-muted/50 text-muted-foreground border-neutral-100'}
+                  ${project.priority === 'High' ? 'bg-red-50 text-red-700 border-red-100' :
+                    project.priority === 'Medium' ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                      'bg-muted/50 text-muted-foreground border-neutral-100'}
                 `}>
                   {project.priority === 'High' ? 'Alta' : project.priority === 'Medium' ? 'Media' : 'Bassa'}
                 </span>
@@ -221,23 +232,25 @@ export function DefaultLayout(props: ProjectPanelProps) {
                 <Mountain className="inline h-4 w-4 mr-1" />
                 Progresso Attività
               </div>
-              
-              <MountainProgress 
+
+              <MountainProgress
                 projectTitle={project.title}
                 tasks={tasks}
               />
-              
+
               <div className="mt-4 pt-4 border-t">
                 <div className="text-xs text-muted-foreground mb-2">Team</div>
                 <div className="flex -space-x-2">
-                  {(project.teamMembers || []).map((initial: string, i: number) => (
-                    <div key={i} className="h-8 w-8 rounded-full bg-neutral-200 border-2 border-white flex items-center justify-center text-xs font-bold text-muted-foreground">
-                      {initial}
-                    </div>
-                  ))}
+                  <div className="flex -space-x-2">
+                    {getTeamMembers(project.teamMembers).map((initial: string, i: number) => (
+                      <div key={i} className="h-8 w-8 rounded-full bg-neutral-200 border-2 border-white flex items-center justify-center text-xs font-bold text-muted-foreground">
+                        {initial}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-              
+
               <div className="mt-4 text-xs text-muted-foreground flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
                 Scadenza: {project.dueDate}
@@ -257,7 +270,7 @@ export function DefaultLayout(props: ProjectPanelProps) {
               <span>Progresso Attività</span>
               <span className="ml-auto font-medium text-foreground">{props.getProgress()}%</span>
             </div>
-            <MountainProgress 
+            <MountainProgress
               projectTitle={project.title}
               tasks={tasks}
             />
@@ -352,9 +365,11 @@ export function NotionLayout(props: ProjectPanelProps) {
                   <Users className="h-4 w-4 text-muted-foreground" />
                   <span className="text-muted-foreground">Team:</span>
                   <div className="flex -space-x-1">
-                    {(project.teamMembers || []).slice(0, 3).map((m: string, i: number) => (
-                      <div key={i} className="h-6 w-6 rounded-full bg-violet-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-violet-600">{m}</div>
-                    ))}
+                    <div className="flex -space-x-1">
+                      {getTeamMembers(project.teamMembers).slice(0, 3).map((m: string, i: number) => (
+                        <div key={i} className="h-6 w-6 rounded-full bg-violet-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-violet-600">{m}</div>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
@@ -448,10 +463,9 @@ export function LinearLayout(props: ProjectPanelProps) {
             <Progress value={progress} className="h-1.5" />
           </div>
           <span className="text-xs font-medium text-muted-foreground">{progress}%</span>
-          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-            project?.priority === 'High' ? 'bg-red-100 text-red-700' :
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${project?.priority === 'High' ? 'bg-red-100 text-red-700' :
             project?.priority === 'Medium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
-          }`}>
+            }`}>
             {project?.priority === 'High' ? 'P1' : project?.priority === 'Medium' ? 'P2' : 'P3'}
           </span>
         </div>
@@ -499,10 +513,9 @@ export function LinearLayout(props: ProjectPanelProps) {
             <div className="p-3 space-y-4">
               <div className="space-y-2">
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Stato</label>
-                <div className={`text-sm font-medium px-2 py-1 rounded inline-block ${
-                  project.status === 'Done' ? 'bg-green-100 text-green-700' :
+                <div className={`text-sm font-medium px-2 py-1 rounded inline-block ${project.status === 'Done' ? 'bg-green-100 text-green-700' :
                   project.status === 'In Progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                }`}>
+                  }`}>
                   {project.status === 'Not Started' ? 'Da Iniziare' : project.status === 'In Progress' ? 'In Corso' : 'Completato'}
                 </div>
               </div>
@@ -513,7 +526,7 @@ export function LinearLayout(props: ProjectPanelProps) {
               <div className="space-y-2">
                 <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Team</label>
                 <div className="flex -space-x-1">
-                  {(project.teamMembers || []).map((m: string, i: number) => (
+                  {getTeamMembers(project.teamMembers).map((m: string, i: number) => (
                     <div key={i} className="h-6 w-6 rounded-full bg-violet-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-violet-600">{m}</div>
                   ))}
                 </div>
@@ -607,7 +620,7 @@ export function FinanzaLayout(props: ProjectPanelProps) {
               <span>Progresso Attività</span>
               <span className="ml-auto font-medium text-foreground">{progress}%</span>
             </div>
-            <MountainProgress 
+            <MountainProgress
               projectTitle={project.title}
               tasks={tasks}
             />
@@ -618,10 +631,9 @@ export function FinanzaLayout(props: ProjectPanelProps) {
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Priorità</label>
-              <span className={`text-sm font-medium px-2 py-1 rounded inline-block ${
-                project.priority === 'High' ? 'bg-red-100 text-red-700' :
+              <span className={`text-sm font-medium px-2 py-1 rounded inline-block ${project.priority === 'High' ? 'bg-red-100 text-red-700' :
                 project.priority === 'Medium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
-              }`}>
+                }`}>
                 {project.priority === 'High' ? 'Alta' : project.priority === 'Medium' ? 'Media' : 'Bassa'}
               </span>
             </div>
@@ -632,7 +644,7 @@ export function FinanzaLayout(props: ProjectPanelProps) {
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Team</label>
               <div className="flex -space-x-2">
-                {(project.teamMembers || []).map((m: string, i: number) => (
+                {getTeamMembers(project.teamMembers).map((m: string, i: number) => (
                   <div key={i} className="h-8 w-8 rounded-full bg-violet-100 border-2 border-white flex items-center justify-center text-xs font-bold text-violet-600">{m}</div>
                 ))}
               </div>
@@ -659,30 +671,30 @@ export function FinanzaLayout(props: ProjectPanelProps) {
 function TaskDateEditor({ task, updateTask }: { task: any; updateTask: (id: string, data: any) => void }) {
   const [startDate, setStartDate] = useState(task.startDate || '');
   const [dueDate, setDueDate] = useState(task.dueDate || '');
-  
+
   const handleSave = () => {
     updateTask(task.id, { startDate, dueDate });
   };
-  
+
   return (
     <div className="space-y-3 p-1">
       <div className="text-xs font-medium text-foreground mb-2">Pianifica attività</div>
       <div className="space-y-2">
         <div>
           <label className="text-[10px] text-muted-foreground block mb-1">Data Inizio</label>
-          <Input 
-            type="date" 
-            value={startDate} 
-            onChange={(e) => setStartDate(e.target.value)} 
+          <Input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
             className="h-7 text-xs"
           />
         </div>
         <div>
           <label className="text-[10px] text-muted-foreground block mb-1">Scadenza</label>
-          <Input 
-            type="date" 
-            value={dueDate} 
-            onChange={(e) => setDueDate(e.target.value)} 
+          <Input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
             className="h-7 text-xs"
           />
         </div>
@@ -706,7 +718,7 @@ function formatDateCompact(dateStr: string | null | undefined): string {
 
 function TasksSection(props: ProjectPanelProps) {
   const { project, tasks, newTask, setNewTask, handleAddTask, toggleTask, deleteTask, updateTask, authUserId, getProgress } = props;
-  
+
   return (
     <>
       <div className="p-3 border-b bg-muted/30">

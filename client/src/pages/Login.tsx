@@ -19,7 +19,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-    const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [clientIP, setClientIP] = useState<string>("");
   const [inactivityTimer, setInactivityTimer] = useState<number | null>(null);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
@@ -32,7 +32,7 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(() => {
     return localStorage.getItem("pulse_remember_me") === "true";
   });
-  
+
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [changePasswordUsername, setChangePasswordUsername] = useState("");
   const [currentPasswordForChange, setCurrentPasswordForChange] = useState("");
@@ -52,45 +52,8 @@ export default function Login() {
 
   // Auto clear cache on page load
   useEffect(() => {
-    const clearCache = async () => {
-      setCacheClearing(true);
-      setCacheProgress(0);
-      
-      // Step 1: Clear caches API
-      setCacheStep("1. Pulizia cache...");
-      setCacheProgress(33);
-      if ('caches' in window) {
-        try {
-          const names = await caches.keys();
-          await Promise.all(names.map(name => caches.delete(name)));
-        } catch (e) {
-          console.log('Cache clear:', e);
-        }
-      }
-      
-      await new Promise(r => setTimeout(r, 400));
-      
-      // Step 2: Clear localStorage (except remember me settings)
-      setCacheStep("2. Ottimizzazione memoria...");
-      setCacheProgress(66);
-      const rememberMeSetting = localStorage.getItem("pulse_remember_me");
-      const savedUser = localStorage.getItem("pulse_saved_username");
-      localStorage.clear();
-      if (rememberMeSetting) localStorage.setItem("pulse_remember_me", rememberMeSetting);
-      if (savedUser) localStorage.setItem("pulse_saved_username", savedUser);
-      
-      await new Promise(r => setTimeout(r, 400));
-      
-      // Step 3: Clear sessionStorage
-      setCacheStep("3. Completamento...");
-      setCacheProgress(100);
-      sessionStorage.clear();
-      
-      await new Promise(r => setTimeout(r, 500));
-      setCacheClearing(false);
-    };
-    
-    clearCache();
+    // Disabled auto cache clear to prevent loading issues
+    setCacheClearing(false);
   }, []);
 
   // Load saved username on mount or auto-fill by IP
@@ -105,8 +68,8 @@ export default function Login() {
             return;
           }
         }
-      } catch {}
-      
+      } catch { }
+
       // Fallback to saved username
       if (rememberMe) {
         const savedUsername = localStorage.getItem("pulse_saved_username");
@@ -115,7 +78,7 @@ export default function Login() {
         }
       }
     };
-    
+
     loadUserByIP();
   }, [rememberMe]);
 
@@ -154,7 +117,7 @@ export default function Login() {
         setServerStatus("offline");
       }
     };
-    
+
     checkServer();
     const interval = setInterval(checkServer, 30000);
     return () => clearInterval(interval);
@@ -172,7 +135,7 @@ export default function Login() {
         setOnlineUsers(null);
       }
     };
-    
+
     fetchOnlineUsers();
     const interval = setInterval(fetchOnlineUsers, 15000);
     return () => clearInterval(interval);
@@ -199,10 +162,10 @@ export default function Login() {
     e.preventDefault();
     setError("");
     setIsLoading(true);
-    
+
     const currentUsername = username;
     const currentPassword = password;
-    
+
     // Save remember me preference (only username for security)
     if (rememberMe) {
       localStorage.setItem("pulse_remember_me", "true");
@@ -211,9 +174,9 @@ export default function Login() {
       localStorage.removeItem("pulse_remember_me");
       localStorage.removeItem("pulse_saved_username");
     }
-    
+
     const result = await login(currentUsername, currentPassword);
-    
+
     if (!result.success) {
       setError(result.error || "Login fallito");
       setPassword("");
@@ -221,17 +184,17 @@ export default function Login() {
       setUsername("");
       setPassword("");
     }
-    
+
     setIsLoading(false);
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setRecoveryLoading(true);
-    
+
     // Simula invio email (in produzione collegare a un vero servizio email)
     await new Promise(resolve => setTimeout(resolve, 1500));
-    
+
     setRecoveryLoading(false);
     setRecoverySent(true);
   };
@@ -245,19 +208,19 @@ export default function Login() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setChangePasswordError("");
-    
+
     if (newPassword !== confirmNewPassword) {
       setChangePasswordError("Le password non coincidono");
       return;
     }
-    
+
     if (newPassword.length < 4) {
       setChangePasswordError("La nuova password deve avere almeno 4 caratteri");
       return;
     }
-    
+
     setChangePasswordLoading(true);
-    
+
     try {
       const res = await fetch("/api/auth/change-password", {
         method: "POST",
@@ -268,9 +231,9 @@ export default function Login() {
           newPassword: newPassword,
         }),
       });
-      
+
       const data = await res.json();
-      
+
       if (!res.ok) {
         setChangePasswordError(data.error || "Errore durante il cambio password");
       } else {
@@ -279,7 +242,7 @@ export default function Login() {
     } catch (error) {
       setChangePasswordError("Errore di connessione");
     }
-    
+
     setChangePasswordLoading(false);
   };
 
@@ -293,7 +256,7 @@ export default function Login() {
     setChangePasswordSuccess(false);
   };
 
-  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-900 to-indigo-950 flex items-center justify-center p-4">
       <style>{`
@@ -360,7 +323,7 @@ export default function Login() {
           animation: sparkle 1.5s ease-in-out infinite;
         }
       `}</style>
-      
+
       <Card className="w-full max-w-md shadow-xl border-0 bg-[#F5F0E6]">
         <CardHeader className="text-center pb-2">
           <div className="mx-auto w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center mb-4 pulse-icon">
@@ -378,20 +341,19 @@ export default function Login() {
             <p>{currentTime.toLocaleDateString("it-IT")} - {currentTime.toLocaleTimeString("it-IT")}</p>
             <div className="flex items-center justify-center gap-3 mt-1">
               <div className="flex items-center gap-1.5">
-                <span 
-                  className={`w-2 h-2 rounded-full ${
-                    serverStatus === "checking" 
-                      ? "bg-yellow-500 animate-pulse" 
-                      : serverStatus === "online" 
-                        ? "bg-green-500" 
+                <span
+                  className={`w-2 h-2 rounded-full ${serverStatus === "checking"
+                      ? "bg-yellow-500 animate-pulse"
+                      : serverStatus === "online"
+                        ? "bg-green-500"
                         : "bg-red-500"
-                  }`}
+                    }`}
                 />
                 <span className={
-                  serverStatus === "checking" 
-                    ? "text-yellow-600" 
-                    : serverStatus === "online" 
-                      ? "text-green-600" 
+                  serverStatus === "checking"
+                    ? "text-yellow-600"
+                    : serverStatus === "online"
+                      ? "text-green-600"
                       : "text-red-600"
                 }>
                   {serverStatus === "checking" ? "Verifica..." : serverStatus === "online" ? "Online" : "Offline"}
@@ -442,7 +404,7 @@ export default function Login() {
             {/* Hidden fields to trick browser password manager */}
             <input type="text" name="fake_user" style={{ display: 'none', position: 'absolute', opacity: 0, pointerEvents: 'none' }} tabIndex={-1} autoComplete="username" aria-hidden="true" />
             <input type="password" name="fake_pass" style={{ display: 'none', position: 'absolute', opacity: 0, pointerEvents: 'none' }} tabIndex={-1} autoComplete="current-password" aria-hidden="true" />
-            
+
             <div className="space-y-2">
               <Label htmlFor="pulse_user_field" className="text-sm font-medium">
                 Nome utente
@@ -519,8 +481,8 @@ export default function Login() {
                 onChange={(e) => setRememberMe(e.target.checked)}
                 className="h-4 w-4 rounded border-border text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
-              <label 
-                htmlFor="remember-me" 
+              <label
+                htmlFor="remember-me"
                 className="text-sm text-muted-foreground cursor-pointer select-none"
               >
                 Ricordami
@@ -533,9 +495,9 @@ export default function Login() {
               </div>
             )}
 
-            <Button 
-              type="submit" 
-              className="w-full bg-blue-600 hover:bg-blue-700" 
+            <Button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700"
               disabled={isLoading}
             >
               {isLoading ? (
@@ -548,7 +510,7 @@ export default function Login() {
               )}
             </Button>
           </form>
-          
+
           {/* Cache Clear Section */}
           <div className="mt-6 pt-4 border-t border-gray-200">
             {cacheClearing ? (
@@ -557,7 +519,7 @@ export default function Login() {
                   {cacheStep || "Avvio..."}
                 </p>
                 <div className="relative h-6 w-full bg-gray-200 rounded-lg overflow-hidden border border-gray-300 shadow-inner">
-                  <div 
+                  <div
                     className="h-full transition-all duration-300 ease-out"
                     style={{
                       width: `${cacheProgress}%`,
@@ -605,7 +567,7 @@ export default function Login() {
               Inserisci la tua email per ricevere le istruzioni di recupero.
             </DialogDescription>
           </DialogHeader>
-          
+
           {!recoverySent ? (
             <form onSubmit={handleForgotPassword} className="space-y-4">
               <div className="space-y-2">
@@ -665,7 +627,7 @@ export default function Login() {
               Inserisci le tue credenziali per cambiare la password.
             </DialogDescription>
           </DialogHeader>
-          
+
           {!changePasswordSuccess ? (
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div className="space-y-2">
@@ -748,13 +710,13 @@ export default function Login() {
                   />
                 </div>
               </div>
-              
+
               {changePasswordError && (
                 <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">
                   {changePasswordError}
                 </div>
               )}
-              
+
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={closeChangePassword} className="flex-1">
                   Annulla
@@ -798,12 +760,12 @@ export default function Login() {
               Avvia Configurazione Sistema
             </DialogTitle>
             <DialogDescription>
-              Questa operazione resetterà il sistema e avvierà il wizard di configurazione iniziale. 
+              Questa operazione resetterà il sistema e avvierà il wizard di configurazione iniziale.
               Dovrai creare un nuovo account amministratore.
             </DialogDescription>
           </DialogHeader>
           <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-800">
-            <strong>Attenzione:</strong> Usa questa opzione solo se non riesci ad accedere al sistema 
+            <strong>Attenzione:</strong> Usa questa opzione solo se non riesci ad accedere al sistema
             o se è la prima configurazione dopo un reset del database.
           </div>
           <div className="space-y-2 mt-4">
@@ -821,27 +783,27 @@ export default function Login() {
             />
           </div>
           <div className="flex gap-2 mt-4">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => {
                 setSetupConfirmOpen(false);
                 setSetupConfirmText("");
-              }} 
+              }}
               className="flex-1"
               disabled={setupLoading}
             >
               Annulla
             </Button>
-            <Button 
-              type="button" 
+            <Button
+              type="button"
               className="flex-1 bg-orange-600 hover:bg-orange-700"
               disabled={setupLoading || setupConfirmText !== "RESET"}
               onClick={async () => {
                 if (setupConfirmText !== "RESET") return;
                 setSetupLoading(true);
                 try {
-                  const res = await fetch("/api/setup/reset-now", { 
+                  const res = await fetch("/api/setup/reset-now", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ confirmCode: setupConfirmText })

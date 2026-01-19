@@ -2,14 +2,26 @@
 import path from "path";
 import fs from "fs";
 import { createServer, type Server } from "http";
+import { addDays, addWeeks, addMonths, addYears } from "date-fns";
 import crypto from "crypto";
+import { processUploadedBook } from "./services/bookImportService";
 import { google } from "googleapis";
+import multer from "multer";
 import { storage } from "./storage";
 import { extractTaskFromEmail } from "./aiService";
 import { db } from "./db";
+import { systemService } from "./services/systemService";
 import { systemLogBuffer } from "./logStore";
-import { eq, desc, and, isNull, ilike, sql } from "drizzle-orm";
+import { eq, desc, and, isNull, isNotNull, ilike, sql, lte } from "drizzle-orm";
 import { invoices, quotes, projects, crmAttivita, crmOpportunita, referentiClienti, customerPortalTokens, anagraficaClienti, anagraficaFornitori, courierTokens, catalogArticles, catalogCategories, promemoriaAnagrafica, marketingCampagne, socialContenuti, youtubeVideos, socialAnalytics, mediaLibrary, googleBusinessAccounts, googleBusinessReviews, googleBusinessPosts, googleBusinessInsights, machinery, machineryConsumptions, machineryCosts, maintenancePlans, maintenanceEvents, maintenanceAlerts, timbrature, turni, richiesteAssenza } from "@shared/schema";
+import {
+  getWhatsAppStatus,
+  initializeWhatsApp,
+  getQRCode,
+  isWhatsAppReady,
+  disconnectWhatsApp,
+  sendWhatsAppMessage
+} from "./whatsappService";
 import {
   insertUserSchema,
   insertProjectSchema,
@@ -47,7 +59,11 @@ import {
   insertFinanceAccountSchema,
   insertFinanceTransactionSchema,
   insertFinanceCategorySchema,
-  ARCHIVE_CATEGORIES
+  ARCHIVE_CATEGORIES,
+  insertBookSchema,
+  insertReadingSessionSchema,
+  contacts,
+  insertContactSchema
 } from "@shared/schema";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -125,7 +141,7 @@ const chatStorage = multer.diskStorage({
   }
 });
 
-const upload = multer({
+const chatUpload = multer({
   storage: chatStorage,
   limits: { fileSize: 25 * 1024 * 1024 },
 });
@@ -267,6 +283,37 @@ const catalogImportUpload = multer({
   }
 });
 
+const bookImportStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), 'uploads', 'books');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Keep original filename if possible, but safe
+    const uniqueSuffix = Date.now();
+    const cleanName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, `${uniqueSuffix}_${cleanName}`);
+  }
+});
+
+const bookImportUpload = multer({
+  storage: bookImportStorage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit per book
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = ['.pdf', '.epub'];
+    const ext = path.extname(file.originalname).toLowerCase();
+
+    if (allowedExtensions.includes(ext) || file.mimetype === 'application/pdf' || file.mimetype === 'application/epub+zip') {
+      cb(null, true);
+    } else {
+      cb(new Error('Solo file PDF e ePub sono supportati'));
+    }
+  }
+});
+
 
 // In-memory tracker for online users (last activity within 5 minutes)
 const activeUsers: Map<string, number> = new Map(); // odString -> lastActiveTimestamp
@@ -302,12 +349,291 @@ export async function registerRoutes(
     res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // =====================
-  // ONLINE USERS API
-  // =====================
-  app.get("/api/online-users", (req: Request, res: Response) => {
-    res.json({ count: getOnlineUsersCount() });
+  // System Volume Control
+  app.post("/api/system/volume", (req: Request, res: Response) => {
+    const { volume } = req.body;
+    if (typeof volume === 'number') {
+      systemService.setSystemVolume(volume);
+      res.json({ success: true, volume });
+    } else {
+      res.status(400).json({ error: "Volume must be a number" });
+    }
   });
+
+  // Generic file upload endpoint for images (used by Pulse Keep and other features)
+  app.post("/api/upload", imageUpload.single("file"), (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "Nessun file caricato" });
+      }
+
+      // Return the relative path that can be served by the static middleware
+      const relativePath = `/uploads/images/${req.file.filename}`;
+
+      res.json({
+        success: true,
+        url: relativePath,
+        path: relativePath,
+        filename: req.file.filename
+      });
+    } catch (error) {
+      console.error("Upload error:", error);
+      res.status(500).json({ error: "Errore durante il caricamento del file" });
+    }
+  });
+
+
+  // =====================
+  // MAPPA CLIENTI API
+  // =====================
+  app.post("/api/public/mappa-clienti/geocode", async (req: Request, res: Response) => {
+    try {
+      const { coordinates } = req.body;
+
+      if (!coordinates || !Array.isArray(coordinates)) {
+        return res.status(400).json({ error: "Formato dati non valido" });
+      }
+
+      console.log(`[Mappa Clienti] Updating coordinates for ${coordinates.length} clients`);
+
+      for (const coord of coordinates) {
+        if (coord.id && coord.latitudine && coord.longitudine) {
+          await db.update(anagraficaClienti)
+            .set({
+              latitudine: String(coord.latitudine),
+              longitudine: String(coord.longitudine)
+            })
+            .where(eq(anagraficaClienti.id, coord.id));
+        }
+      }
+
+      res.json({ success: true, count: coordinates.length });
+    } catch (error: any) {
+      console.error("Error saving client coordinates:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // ANAGRAFICA CLIENTI
+  // =====================
+  app.get("/api/anagrafica/clienti", async (req: Request, res: Response) => {
+    try {
+      const clienti = await storage.getAnagraficaClienti();
+      res.json(clienti);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/anagrafica/clienti/:id", async (req: Request, res: Response) => {
+    try {
+      const cliente = await storage.getAnagraficaCliente(req.params.id);
+      if (!cliente) return res.status(404).json({ error: "Cliente non trovato" });
+      res.json(cliente);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/anagrafica/clienti", async (req: Request, res: Response) => {
+    try {
+      const data = insertAnagraficaClientiSchema.parse(req.body);
+      const cliente = await storage.createAnagraficaCliente(data);
+      res.json(cliente);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/anagrafica/clienti/:id", async (req: Request, res: Response) => {
+    try {
+      const data = insertAnagraficaClientiSchema.partial().parse(req.body);
+      const cliente = await storage.updateAnagraficaCliente(req.params.id, data);
+      if (!cliente) return res.status(404).json({ error: "Cliente non trovato" });
+      res.json(cliente);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/anagrafica/clienti/:id", async (req: Request, res: Response) => {
+    try {
+      const success = await storage.deleteAnagraficaCliente(req.params.id);
+      if (!success) return res.status(404).json({ error: "Cliente non trovato" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // PROJECTS API
+  // =====================
+  app.get("/api/projects", async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId;
+      const projects = await storage.getProjects(userId);
+      res.json(projects);
+    } catch (error: any) {
+      console.error("Error fetching projects:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/projects/:id", async (req: Request, res: Response) => {
+    try {
+      const project = await storage.getProject(req.params.id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      res.json(project);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/projects", async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId;
+      const data = insertProjectSchema.parse({
+        ...req.body,
+        owner: userId || req.body.owner
+      });
+      const project = await storage.createProject(data);
+      res.json(project);
+    } catch (error: any) {
+      console.error("Error creating project:", error);
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/projects/:id", async (req: Request, res: Response) => {
+    try {
+      const data = insertProjectSchema.partial().parse(req.body);
+      const project = await storage.updateProject(req.params.id, data);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      res.json(project);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/projects/:id", async (req: Request, res: Response) => {
+    try {
+      const success = await storage.deleteProject(req.params.id);
+      if (!success) return res.status(404).json({ error: "Project not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Project Shares
+  app.get("/api/projects/:id/shares", async (req: Request, res: Response) => {
+    try {
+      const shares = await storage.getProjectShares(req.params.id);
+      res.json(shares);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/projects/:id/shares", async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId;
+      const data = insertProjectShareSchema.parse({
+        ...req.body,
+        projectId: req.params.id,
+        sharedById: userId || req.body.sharedById
+      });
+      const share = await storage.createProjectShare(data);
+      res.json(share);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/projects/:projectId/shares/:shareId", async (req: Request, res: Response) => {
+    try {
+      const success = await storage.deleteProjectShare(req.params.shareId);
+      if (!success) return res.status(404).json({ error: "Share not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Project Share Links
+  app.post("/api/projects/:id/share", async (req: Request, res: Response) => {
+    try {
+      const { expiresInDays = 7 } = req.body;
+      const shareToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+
+      const project = await storage.updateProject(req.params.id, {
+        shareToken,
+        shareExpiresAt: expiresAt.toISOString()
+      });
+
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      res.json({
+        shareToken,
+        shareUrl: `/shared/project/${shareToken}`,
+        expiresAt: expiresAt.toISOString()
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/projects/:id/share", async (req: Request, res: Response) => {
+    try {
+      const project = await storage.updateProject(req.params.id, {
+        shareToken: null,
+        shareExpiresAt: null
+      });
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // USER ALARM SETTINGS API
+  // =====================
+  app.get("/api/alarm-settings/:userId", async (req: Request, res: Response) => {
+    try {
+      const settings = await storage.getUserAlarmSettings(req.params.userId);
+      if (!settings) {
+        // Return default settings if none exist
+        return res.json({
+          alarmTime: "07:00",
+          selectedDays: [],
+          useOpenAI: false,
+          openAIKey: null,
+          selectedVoice: "default"
+        });
+      }
+      res.json(settings);
+    } catch (error: any) {
+      console.error("Error fetching alarm settings:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/alarm-settings/:userId", async (req: Request, res: Response) => {
+    try {
+      const settings = await storage.upsertUserAlarmSettings(req.params.userId, req.body);
+      res.json(settings);
+    } catch (error: any) {
+      console.error("Error saving alarm settings:", error);
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // =====================
 
   app.post("/api/heartbeat", (req: Request, res: Response) => {
     const { userId } = req.body;
@@ -1276,6 +1602,79 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
+
+  // =====================
+  // WHATSAPP API
+  // =====================
+  app.get("/api/whatsapp/status", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || "system";
+    const status = getWhatsAppStatus(userId);
+    res.json(status);
+  });
+
+  app.post("/api/whatsapp/connect", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || "system";
+    try {
+      if (isWhatsAppReady(userId)) {
+        return res.json({ success: true, message: "Already connected" });
+      }
+      initializeWhatsApp(userId);
+      res.json({ success: true, message: "Initialization started" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whatsapp/qr", (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || "system";
+    const qr = getQRCode(userId);
+    res.json({ qr });
+  });
+
+  app.post("/api/whatsapp/disconnect", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || "system";
+    try {
+      await disconnectWhatsApp(userId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whatsapp/contacts", async (req: Request, res: Response) => {
+    try {
+      const contacts = await storage.getWhatsappContacts();
+      res.json(contacts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whatsapp/messages/:contactId", async (req: Request, res: Response) => {
+    try {
+      const messages = await storage.getWhatsappMessages(req.params.contactId);
+      res.json(messages);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whatsapp/send", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || "system";
+    try {
+      const { phoneNumber, message } = req.body;
+      if (!phoneNumber || !message) {
+        return res.status(400).json({ error: "Phone number and message required" });
+      }
+
+      await sendWhatsAppMessage(userId, phoneNumber, message);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Send message error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // =====================
   // PROJECTS API
   // =====================
@@ -1346,7 +1745,15 @@ export async function registerRoutes(
 
   app.post("/api/projects", async (req: Request, res: Response) => {
     try {
-      const projectData = insertProjectSchema.parse(req.body);
+      const userId = (req as any).session?.userId || req.headers["x-user-id"];
+      const user = userId ? await storage.getUser(userId) : undefined;
+
+      const projectData = insertProjectSchema.parse({
+        ...req.body,
+        // Prefer assigning owner by ID, but fallback to provided or null. 
+        // If legacy behavior used Name, we should stick to ID now for consistency.
+        owner: userId || req.body.owner
+      });
       const project = await storage.createProject(projectData);
 
       // Automatically create archive folder for project (avoid duplicates)
@@ -2245,102 +2652,82 @@ export async function registerRoutes(
   // USER EMAIL CONFIG API
   // =====================
 
-  app.get("/api/user-email-config/:userId", async (req, res) => {
-    try {
-      // Security check: Ensure user can only access their own config
-      const sessionUserId = (req as any).session?.userId || req.headers["x-user-id"];
-      const requestedUserId = req.params.userId;
-
-      // Allow admin to see all? Maybe not for email configs (privacy). 
-      // For now, strict check:
-      if (sessionUserId && sessionUserId !== requestedUserId) {
-        // Special case: if admin, maybe allow? 
-        // Let's check role if strict strict. 
-        // But for now, simple check.
-        // If we want to allow admin, we need to fetch user role.
-        // Assuming strict privacy for email credentials.
-        return res.status(403).json({ error: "Accesso negato alla configurazione email di un altro utente" });
-      }
-
-      const configs = await storage.getUserEmailConfigs(req.params.userId);
-      if (configs && configs.length > 0) {
-        res.json(configs[0]);
-      } else {
-        // Return 404 as expected by the frontend check "if (!res.ok) return null"
-        res.status(404).json({ message: "Configurazione non trovata" });
-      }
-    } catch (error) {
-      console.error("Error fetching email config:", error);
-      res.status(500).json({ error: "Errore nel recupero della configurazione" });
-    }
+  // List configs
+  app.get("/api/user-email-config", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const configs = await storage.getUserEmailConfigs(userId);
+    res.json(configs);
   });
 
-  app.post("/api/user-email-config/:userId", async (req, res) => {
-    try {
-      // Ensure userId matches
-      const data = { ...req.body, userId: req.params.userId };
-      const configData = insertUserEmailConfigSchema.parse(data);
+  // Get single config
+  app.get("/api/user-email-config/:id", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-      // Check if exists to avoid duplicates (though frontend logic separates POST/PUT)
-      const existing = await storage.getUserEmailConfigs(req.params.userId);
-      if (existing && existing.length > 0) {
-        return res.status(409).json({ error: "Configurazione già esistente. Usa PUT per aggiornare." });
-      }
+    const config = await storage.getUserEmailConfig(req.params.id);
+    if (!config) return res.status(404).json({ error: "Config not found" });
+    if (config.userId !== userId) return res.status(403).json({ error: "Forbidden" });
 
-      const config = await storage.createUserEmailConfig(configData);
-      res.status(201).json(config);
-    } catch (error) {
-      console.error("Error creating email config:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
-      res.status(500).json({ error: "Errore nel salvataggio della configurazione" });
-    }
+    res.json(config);
   });
 
-  app.put("/api/user-email-config/:userId", async (req, res) => {
-    try {
-      const configs = await storage.getUserEmailConfigs(req.params.userId);
-      if (!configs || configs.length === 0) {
-        return res.status(404).json({ error: "Configurazione non trovata" });
-      }
+  // Create config
+  app.post("/api/user-email-config", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-      const configId = configs[0].id; // We assume 1 config per user for now
-      const configData = insertUserEmailConfigSchema.partial().parse(req.body);
+    const parsed = insertUserEmailConfigSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error });
 
-      const updated = await storage.updateUserEmailConfig(configId, configData);
-      res.json(updated);
-    } catch (error) {
-      console.error("Error updating email config:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: error.errors });
-      }
-      res.status(500).json({ error: "Errore nell'aggiornamento della configurazione" });
-    }
+    const config = await storage.createUserEmailConfig({ ...parsed.data, userId });
+    res.status(201).json(config);
   });
 
-  app.delete("/api/user-email-config/:userId", async (req, res) => {
-    try {
-      const configs = await storage.getUserEmailConfigs(req.params.userId);
-      if (!configs || configs.length === 0) {
-        return res.status(404).json({ error: "Configurazione non trovata" });
-      }
+  // Update config
+  app.patch("/api/user-email-config/:id", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-      await storage.deleteUserEmailConfig(configs[0].id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting email config:", error);
-      res.status(500).json({ error: "Errore nella rimozione della configurazione" });
-    }
+    const existing = await storage.getUserEmailConfig(req.params.id);
+    if (!existing) return res.status(404).json({ error: "Config not found" });
+    if (existing.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+    const parsed = insertUserEmailConfigSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error });
+
+    const updated = await storage.updateUserEmailConfig(req.params.id, parsed.data);
+    res.json(updated);
   });
 
-  app.post("/api/email/test-connection", async (req, res) => {
+  // Delete config
+  app.delete("/api/user-email-config/:id", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const existing = await storage.getUserEmailConfig(req.params.id);
+    if (!existing) return res.status(404).json({ error: "Config not found" });
+    if (existing.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+    await storage.deleteUserEmailConfig(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Test connection
+  app.post("/api/user-email-config/test", async (req: Request, res: Response) => {
+    const userId = (req as any).session?.userId || req.headers["x-user-id"];
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
     try {
       const result = await testEmailConnection(req.body);
-      res.json(result);
-    } catch (error) {
+      if (result) {
+        res.json({ success: true });
+      } else {
+        res.status(400).json({ error: "Connessione fallita. Verifica le credenziali." });
+      }
+    } catch (error: any) {
       console.error("Error testing email connection:", error);
-      res.status(500).json({ success: false, message: "Errore interno durante il test" });
+      res.status(400).json({ error: error.message || "Errore durante il test" });
     }
   });
 
@@ -2365,7 +2752,20 @@ export async function registerRoutes(
   app.get("/api/emails", async (req: Request, res: Response) => {
     const userId = (req as any).session?.userId || req.headers["x-user-id"];
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-    const emails = await storage.getEmails(userId, limit);
+    const unreadOnly = req.query.unread === 'true';
+
+    // Check configuration
+    let configured = false;
+    if (userId) {
+      const configs = await storage.getUserEmailConfigs(userId);
+      configured = configs.length > 0;
+    }
+    // Fallback to env vars if not configured in DB (legacy support)
+    if (!configured) {
+      configured = !!(process.env.ARUBA_EMAIL_ADDRESS && process.env.ARUBA_EMAIL_PASSWORD);
+    }
+
+    const emails = await storage.getEmails(userId, limit, undefined, unreadOnly);
 
     // Trigger background sync to ensure dashboard is up to date
     if (userId) {
@@ -2373,7 +2773,7 @@ export async function registerRoutes(
       syncEmailsBackground(userId).catch(err => console.error("Dashboard background sync error:", err));
     }
 
-    res.json(emails);
+    res.json({ configured, emails });
   });
 
   app.get("/api/emails/:id", async (req: Request, res: Response) => {
@@ -2437,11 +2837,14 @@ export async function registerRoutes(
         userConfig = userConfigs[0];
       }
 
+      console.log(`[Background Sync] Starting sync for user ${userId}, folder ${folder}`);
+
       let userCreds: UserEmailCredentials;
 
       if (!userConfig || !userConfig.emailAddress || !userConfig.password) {
         // Fallback to environment variables
         if (process.env.ARUBA_EMAIL_ADDRESS && process.env.ARUBA_EMAIL_PASSWORD) {
+          console.log("[Background Sync] Using env vars for credentials");
           userCreds = {
             emailAddress: process.env.ARUBA_EMAIL_ADDRESS,
             password: process.env.ARUBA_EMAIL_PASSWORD,
@@ -2454,10 +2857,11 @@ export async function registerRoutes(
             displayName: "Aruba Email"
           };
         } else {
-          console.log("[Background Sync] No credentials found");
+          console.log("[Background Sync] No credentials found (DB or Env)");
           return;
         }
       } else {
+        console.log("[Background Sync] Using DB credentials");
         userCreds = {
           emailAddress: userConfig.emailAddress,
           password: userConfig.password,
@@ -2471,41 +2875,57 @@ export async function registerRoutes(
         };
       }
 
+      // Determine target account ID
+      const targetAccountId = userConfig?.id;
+
       // Scarica email dalla cartella (Optimized)
       const lastUid = await storage.getLastEmailUid(userId, folder);
       let emails: any[] = [];
 
-      if (lastUid > 0) {
-        console.log(`[Background Sync] Fetching new emails since UID ${lastUid}`);
-        emails = await fetchNewEmails(userCreds, folder, lastUid);
-      } else {
-        console.log(`[Background Sync] Initial sync, fetching last 50 emails`);
-        emails = await fetchEmailsFromFolderWithConfig(userCreds, folder, 50, true);
+      try {
+        if (lastUid > 0) {
+          console.log(`[Background Sync] Fetching new emails since UID ${lastUid}`);
+          emails = await fetchNewEmails(userCreds, folder, lastUid);
+        } else {
+          console.log(`[Background Sync] Initial sync, fetching last 50 emails`);
+          emails = await fetchEmailsFromFolderWithConfig(userCreds, folder, 50, true);
+        }
+        console.log(`[Background Sync] Fetched ${emails.length} emails from IMAP`);
+      } catch (fetchErr) {
+        console.error("[Background Sync] Fetch Error:", fetchErr);
+        return;
       }
 
       for (const email of emails) {
         const uid = email.uid || 0;
 
-        const existing = await storage.getEmailCacheByUid(userId, folder, uid);
-        if (!existing) {
-          await storage.createEmailCache({
-            userId,
-            uid,
-            folder,
-            messageId: email.id,
-            fromAddress: email.fromAddress,
-            fromName: email.fromName || null,
-            toAddress: email.toAddress,
-            subject: email.subject,
-            preview: email.preview,
-            body: email.body,
-            bodyHtml: email.body,
-            unread: email.unread,
-            starred: email.starred || false,
-            receivedAt: email.receivedAt ? new Date(email.receivedAt).toISOString() : new Date().toISOString(),
-          });
+        try {
+          const existing = await storage.getEmailCacheByUid(userId, folder, uid, targetAccountId);
+          if (!existing) {
+            console.log(`[Background Sync] Saving new email UID ${uid}: ${email.subject}`);
+            await storage.createEmailCache({
+              userId,
+              uid,
+              folder,
+              accountId: targetAccountId,
+              messageId: email.id,
+              fromAddress: email.fromAddress,
+              fromName: email.fromName || null,
+              toAddress: email.toAddress,
+              subject: email.subject,
+              preview: email.preview,
+              body: email.body,
+              bodyHtml: email.body,
+              unread: email.unread,
+              starred: email.starred || false,
+              receivedAt: email.receivedAt ? new Date(email.receivedAt).toISOString() : new Date().toISOString(),
+            });
+          }
+        } catch (saveErr) {
+          console.error(`[Background Sync] Error saving email UID ${uid}:`, saveErr);
         }
       }
+
       console.log(`[Background Sync] Completed. Fetched ${emails.length} emails.`);
     } catch (e) {
       console.error("[Background Sync] Error:", e);
@@ -2709,6 +3129,9 @@ export async function registerRoutes(
         };
       }
 
+      // Determine target account ID
+      const targetAccountId = userConfig?.id;
+
       // Aggiorna stato sync
       await storage.upsertEmailSyncState({
         userId,
@@ -2728,12 +3151,13 @@ export async function registerRoutes(
         const uid = uidMatch ? parseInt(uidMatch[1]) : 0;
 
         // Controlla se esiste già
-        const existing = await storage.getEmailCacheByUid(userId, folder, uid);
+        const existing = await storage.getEmailCacheByUid(userId, folder, uid, targetAccountId);
         if (!existing) {
           await storage.createEmailCache({
             userId,
             uid,
             folder,
+            accountId: targetAccountId,
             messageId: email.id,
             fromAddress: email.fromAddress,
             fromName: email.fromName || null,
@@ -4682,13 +5106,13 @@ export async function registerRoutes(
   });
 
   // Upload attachment for chat
-  app.post("/api/chat/upload", upload.single("file"), async (req: Request, res: Response) => {
+  app.post("/api/chat/upload", chatUpload.single("file"), async (req: Request, res: Response) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
       }
 
-      const fileUrl = `/uploads/${req.file.filename}`;
+      const fileUrl = `/uploads/chat/${req.file.filename}`;
       res.json({
         url: fileUrl,
         filename: req.file.originalname,
@@ -5518,11 +5942,68 @@ export async function registerRoutes(
 
   app.patch("/api/personal-todos/:id", async (req: Request, res: Response) => {
     try {
-      const todoData = insertPersonalTodoSchema.partial().parse(req.body);
-      const todo = await storage.updatePersonalTodo(req.params.id, todoData);
-      if (!todo) {
+      // Fetch existing BEFORE update to check if we are completing it
+      const existingTodo = await storage.getPersonalTodo(req.params.id);
+      if (!existingTodo) {
         return res.status(404).json({ error: "Todo not found" });
       }
+
+      const todoData = insertPersonalTodoSchema.partial().parse(req.body);
+      const todo = await storage.updatePersonalTodo(req.params.id, todoData);
+
+      // Handle Recurrence Logic
+      // Check if task was just marked completed, it wasn't before, and it has recurrence
+      if (todoData.completed === true && !existingTodo.completed && todo && todo.recurrenceType && todo.recurrenceType !== "none" && todo.dueDate) {
+        try {
+          let nextDate = new Date(todo.dueDate);
+          if (!isNaN(nextDate.getTime())) {
+            switch (todo.recurrenceType) {
+              case "daily":
+                nextDate = addDays(nextDate, 1);
+                break;
+              case "weekly":
+                nextDate = addWeeks(nextDate, 1);
+                break;
+              case "biweekly":
+                nextDate = addWeeks(nextDate, 2);
+                break;
+              case "monthly":
+                nextDate = addMonths(nextDate, 1);
+                break;
+              case "yearly":
+                nextDate = addYears(nextDate, 1);
+                break;
+            }
+
+            const hasEndDate = todo.recurrenceEndDate && todo.recurrenceEndDate !== "";
+            const isWithinRange = !hasEndDate || new Date(todo.recurrenceEndDate!) >= nextDate;
+
+            if (isWithinRange) {
+              const newTodoData = {
+                userId: todo.userId,
+                title: todo.title,
+                description: todo.description,
+                priority: todo.priority || "medium",
+                dueDate: nextDate.toISOString(), // Assuming ISO string storage
+                category: todo.category,
+                projectId: todo.projectId,
+                recurrenceType: todo.recurrenceType,
+                recurrenceEndDate: todo.recurrenceEndDate,
+                reminderBefore: todo.reminderBefore,
+                reminderSent: false,
+                starred: false,
+                completed: false,
+                tags: todo.tags || [],
+              };
+              await storage.createPersonalTodo(newTodoData);
+              console.log(`[Recurrence] Created next recurrence for task ${todo.id} at ${nextDate.toISOString()}`);
+            }
+          }
+        } catch (recError) {
+          console.error("[Recurrence] Error creating next task:", recError);
+        }
+      }
+
       res.json(todo);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -6759,223 +7240,7 @@ Generato da PULSE AI il ${new Date().toLocaleDateString('it-IT')} alle ${new Dat
     }
   };
 
-  app.get("/api/admin/db/tables", adminAuthMiddleware, async (req: Request, res: Response) => {
-    try {
-      // Query sqlite_master to get all table names
-      const result = await db.execute(sql`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`);
-      const tables = result.rows.map((r: any) => r.name);
-      res.json({ tables });
-    } catch (error) {
-      console.error("Failed to get tables:", error);
-      res.status(500).json({ error: "Failed to get tables" });
-    }
-  });
 
-  app.get("/api/admin/db/:tableName", adminAuthMiddleware, async (req: Request, res: Response) => {
-    try {
-      const { tableName } = req.params;
-      const page = parseInt(req.query.page as string) || 1;
-      const pageSize = parseInt(req.query.pageSize as string) || 20;
-      const offset = (page - 1) * pageSize;
-
-      // Validate table name against sqlite_master to prevent injection
-      const tablesResult = await db.execute(sql`SELECT name FROM sqlite_master WHERE type='table' AND name = ${tableName}`);
-      if (!tablesResult.rows || tablesResult.rows.length === 0) {
-        return res.status(400).json({ error: "Invalid table name" });
-      }
-
-      // Count total records
-      const countResult = await db.execute(sql.raw(`SELECT COUNT(*) as count FROM ${tableName}`));
-      const total = countResult.rows[0].count;
-
-      // Fetch paginated data
-      const dataResult = await db.execute(sql.raw(`SELECT * FROM ${tableName} LIMIT ${pageSize} OFFSET ${offset}`));
-      let data = dataResult.rows;
-
-      // Redact sensitive columns
-      if (data.length > 0) {
-        const sensitiveKeys = ['password', 'token', 'secret', 'session', 'hash'];
-        data = data.map((row: any) => {
-          const newRow = { ...row };
-          for (const key of Object.keys(newRow)) {
-            if (sensitiveKeys.some(k => key.toLowerCase().includes(k))) {
-              newRow[key] = "[REDACTED]";
-            }
-          }
-          return newRow;
-        });
-      }
-
-      res.json({
-        data,
-        total,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize)
-      });
-    } catch (error) {
-      console.error("Database explorer error:", error);
-      res.status(500).json({ error: "Failed to get table data" });
-    }
-  });
-
-  // Purge table data (admin only)
-  app.post("/api/admin/db/:tableName/purge", adminAuthMiddleware, async (req: Request, res: Response) => {
-    try {
-      const { tableName } = req.params;
-
-      const purgeableTables = ["chatMessages", "chatChannels", "activityFeed"];
-      if (!purgeableTables.includes(tableName)) {
-        return res.status(400).json({ error: "Questa tabella non può essere svuotata" });
-      }
-
-      let deleted = 0;
-
-      switch (tableName) {
-        case "chatMessages":
-          const messages = await storage.getChatMessages();
-          deleted = messages.length;
-          await storage.purgeAllChatMessages();
-          break;
-        case "chatChannels":
-          const channels = await storage.getChatChannels();
-          deleted = channels.length;
-          await storage.purgeAllChatChannels();
-          break;
-        case "activityFeed":
-          const activities = await storage.getActivityFeed();
-          deleted = activities.length;
-          await storage.purgeActivityFeed();
-          break;
-        default:
-          return res.status(400).json({ error: "Tabella non supportata" });
-      }
-
-      res.json({ success: true, deleted });
-    } catch (error) {
-      console.error("Database purge error:", error);
-      res.status(500).json({ error: "Errore durante la cancellazione" });
-    }
-  });
-
-  // Purge ALL data except users/permissions (admin only)
-  app.post("/api/admin/db/purge-all", adminAuthMiddleware, async (req: Request, res: Response) => {
-    try {
-      let totalDeleted = 0;
-      let tablesCleared = 0;
-
-      // Tabelle da NON cancellare (gestione utenti e configurazioni)
-      const excludedTables = [
-        "users", "rolePermissions", "userPermissions", "appSettings", "session"
-      ];
-
-      // Ordine di cancellazione (rispetta foreign keys - prima le tabelle dipendenti)
-      const tablesToPurge = [
-        // Righe e dettagli prima dei master
-        { name: "invoiceLines", fn: async () => await db.delete(invoiceLines) },
-        { name: "quoteLines", fn: async () => await db.delete(quoteLines) },
-        { name: "ddtLines", fn: async () => await db.delete(ddtLines) },
-        { name: "spedizioniRighe", fn: async () => await db.delete(spedizioniRighe) },
-        { name: "warehouseMovements", fn: async () => await db.delete(warehouseMovements) },
-
-        // Tabelle con riferimenti
-        { name: "invoiceReminders", fn: async () => await db.delete(invoiceReminders) },
-        { name: "projectEmails", fn: async () => await db.delete(projectEmails) },
-        { name: "projectDocuments", fn: async () => await db.delete(projectDocuments) },
-        { name: "projectComments", fn: async () => await db.delete(projectComments) },
-        { name: "taskComments", fn: async () => await db.delete(taskComments) },
-        { name: "subtasks", fn: async () => await db.delete(subtasks) },
-        { name: "timeEntries", fn: async () => await db.delete(timeEntries) },
-        { name: "documentShares", fn: async () => await db.delete(documentShares) },
-        { name: "documentComments", fn: async () => await db.delete(documentComments) },
-        { name: "whiteboardElements", fn: async () => await db.delete(whiteboardElements) },
-
-        // CRM
-        { name: "crmAttivita", fn: async () => await db.delete(crmAttivita) },
-        { name: "crmOpportunita", fn: async () => await db.delete(crmOpportunita) },
-        { name: "crmLeads", fn: async () => await db.delete(crmLeads) },
-
-        // Referenti e indirizzi
-        { name: "referentiClienti", fn: async () => await db.delete(referentiClienti) },
-        { name: "indirizziSpedizioneClienti", fn: async () => await db.delete(indirizziSpedizioneClienti) },
-        { name: "clientPortalTokens", fn: async () => await db.delete(clientPortalTokens) },
-
-        // Documenti master
-        { name: "invoices", fn: async () => await db.delete(invoices) },
-        { name: "quotes", fn: async () => await db.delete(quotes) },
-        { name: "ddt", fn: async () => await db.delete(ddt) },
-        { name: "spedizioni", fn: async () => await db.delete(spedizioni) },
-
-        // Altre tabelle master
-        { name: "tasks", fn: async () => await db.delete(tasks) },
-        { name: "projects", fn: async () => await db.delete(projects) },
-        { name: "emails", fn: async () => await db.delete(emails) },
-        { name: "documents", fn: async () => await db.delete(documents) },
-        { name: "archivedDocuments", fn: async () => await db.delete(archivedDocuments) },
-        { name: "archiveFolders", fn: async () => await db.delete(archiveFolders) },
-
-        // Anagrafica
-        { name: "anagraficaClienti", fn: async () => await db.delete(anagraficaClienti) },
-        { name: "anagraficaPersonale", fn: async () => await db.delete(anagraficaPersonale) },
-        { name: "anagraficaFornitori", fn: async () => await db.delete(anagraficaFornitori) },
-
-        // Magazzino
-        { name: "warehouseProducts", fn: async () => await db.delete(warehouseProducts) },
-        { name: "warehouseCategories", fn: async () => await db.delete(warehouseCategories) },
-        { name: "warehouseCodeCounters", fn: async () => await db.delete(warehouseCodeCounters) },
-
-        // Corrieri
-        { name: "corrieri", fn: async () => await db.delete(corrieri) },
-
-        // Chat e messaggi
-        { name: "chatMessages", fn: async () => await db.delete(chatMessages) },
-        { name: "chatChannels", fn: async () => await db.delete(chatChannels) },
-        { name: "telegramMessages", fn: async () => await db.delete(telegramMessages) },
-        { name: "telegramChats", fn: async () => await db.delete(telegramChats) },
-        { name: "whatsappMessages", fn: async () => await db.delete(whatsappMessages) },
-        { name: "whatsappContacts", fn: async () => await db.delete(whatsappContacts) },
-
-        // Keep e note
-        { name: "keepNotes", fn: async () => await db.delete(keepNotes) },
-        { name: "keepLabels", fn: async () => await db.delete(keepLabels) },
-        { name: "keepNoteTemplates", fn: async () => await db.delete(keepNoteTemplates) },
-
-        // Altre tabelle
-        { name: "whiteboards", fn: async () => await db.delete(whiteboards) },
-        { name: "personalTodos", fn: async () => await db.delete(personalTodos) },
-        { name: "todoTemplates", fn: async () => await db.delete(todoTemplates) },
-        { name: "notifications", fn: async () => await db.delete(notifications) },
-        { name: "activityFeed", fn: async () => await db.delete(activityFeed) },
-        { name: "sharedLinks", fn: async () => await db.delete(sharedLinks) },
-        { name: "teamAvailability", fn: async () => await db.delete(teamAvailability) },
-
-        // Contatori fatture
-        { name: "invoiceCounters", fn: async () => await db.delete(invoiceCounters) },
-      ];
-
-      for (const table of tablesToPurge) {
-        try {
-          const result = await table.fn();
-          if (result && typeof result.rowCount === 'number') {
-            totalDeleted += result.rowCount;
-          }
-          tablesCleared++;
-        } catch (err) {
-          console.log(`Skipping table ${table.name}:`, err);
-        }
-      }
-
-      res.json({
-        success: true,
-        totalDeleted,
-        tablesCleared,
-        message: "Database svuotato con successo (esclusi utenti e configurazioni)"
-      });
-    } catch (error) {
-      console.error("Database purge-all error:", error);
-      res.status(500).json({ error: "Errore durante la cancellazione totale" });
-    }
-  });
 
   // =====================
   // PULSE KEEP API
@@ -7530,7 +7795,7 @@ Generato da PULSE AI il ${new Date().toLocaleDateString('it-IT')} alle ${new Dat
   // =====================
   // PARSE CEDOLINO (AI)
   // =====================
-  app.post("/api/parse-cedolino", upload.single("file"), async (req: Request, res: Response) => {
+  app.post("/api/parse-cedolino", chatUpload.single("file"), async (req: Request, res: Response) => {
     try {
       const file = req.file;
       if (!file) {
@@ -9560,7 +9825,7 @@ Report generato automaticamente da PULSE ERP.`,
   // Indirizzi Spedizione Clienti
   app.get("/api/anagrafica/clienti/:clienteId/indirizzi-spedizione", async (req: Request, res: Response) => {
     try {
-      const indirizzi = await storage.getIndirizziSpedizioneByCliente(req.params.clienteId);
+      const indirizzi = await storage.getIndirizziSpedizione(req.params.clienteId);
       res.json(indirizzi);
     } catch (error) {
       res.status(500).json({ error: "Errore nel recupero indirizzi" });
@@ -11665,7 +11930,7 @@ Report generato automaticamente da PULSE ERP.`,
   });
 
   // Import DDT from Excel
-  app.post("/api/finance/ddt/import", finanzaAuthMiddleware, upload.single("file"), async (req: Request, res: Response) => {
+  app.post("/api/finance/ddt/import", finanzaAuthMiddleware, chatUpload.single("file"), async (req: Request, res: Response) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "File non fornito" });
@@ -15614,6 +15879,27 @@ Report generato automaticamente da PULSE ERP.`,
 
   // ==================== CATALOGO ARTICOLI API ====================
 
+  // API Pubbliche per Portale Clienti
+  app.get("/api/catalogo/pubblico/articoli", async (req, res) => {
+    try {
+      const articoli = await db.select().from(catalogArticles).where(eq(catalogArticles.attivo, 1));
+      res.json(articoli);
+    } catch (error: any) {
+      console.error("Errore recupero articoli pubblici:", error);
+      res.status(500).json({ error: "Errore nel recupero degli articoli" });
+    }
+  });
+
+  app.get("/api/catalogo/pubblico/categorie", async (req, res) => {
+    try {
+      const categorie = await db.select().from(catalogCategories);
+      res.json(categorie);
+    } catch (error: any) {
+      console.error("Errore recupero categorie pubbliche:", error);
+      res.status(500).json({ error: "Errore nel recupero delle categorie" });
+    }
+  });
+
   app.get("/api/catalogo/next-codice", async (req, res) => {
     try {
       const rows = await (db as any).all(sql`
@@ -15697,7 +15983,7 @@ Report generato automaticamente da PULSE ERP.`,
     }
   });
 
-  app.post("/api/catalogo/import", upload.single("file"), async (req, res) => {
+  app.post("/api/catalogo/import", chatUpload.single("file"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Nessun file caricato" });
@@ -16629,7 +16915,7 @@ Report generato automaticamente da PULSE ERP.`,
   });
 
   // Google Business - Import Reviews from CSV/Excel
-  app.post("/api/google-business/import-reviews", upload.single('file'), async (req, res) => {
+  app.post("/api/google-business/import-reviews", chatUpload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "Nessun file caricato" });
@@ -18254,6 +18540,33 @@ Rispondi SOLO con il JSON valido, senza markdown o testo aggiuntivo.`;
 
 
   // =====================
+  // INTEGRATIONS STATUS API
+  // =====================
+
+  app.get("/api/calendar/status", async (req, res) => {
+    try {
+      const connected = await isCalendarConnected();
+      res.json({ connected });
+    } catch (error) {
+      res.json({ connected: false });
+    }
+  });
+
+  app.get("/api/email/status", (req, res) => {
+    try {
+      const connected = isEmailConfigured();
+      res.json({ connected });
+    } catch (error) {
+      res.json({ connected: false });
+    }
+  });
+
+  app.get("/api/telegram/status", (req, res) => {
+    const connected = !!process.env.TELEGRAM_BOT_TOKEN;
+    res.json({ connected });
+  });
+
+  // =====================
   // ADMIN DB API
   // =====================
 
@@ -18273,89 +18586,7 @@ Rispondi SOLO con il JSON valido, senza markdown o testo aggiuntivo.`;
     return res.status(403).json({ error: "Unauthorized - Admin access required" });
   };
 
-  app.get("/api/admin/db/tables", requireAdmin, async (req, res) => {
-    try {
-      const result = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-      const tables = result.length > 0 && (result[0] as any).name
-        ? result.map((r: any) => r.name)
-        : (result as any[]).map(r => r.name || Object.values(r)[0]);
 
-      res.json({ tables });
-    } catch (error: any) {
-      console.error("Error listing tables:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/admin/db/:tableName", requireAdmin, async (req, res) => {
-    try {
-      const tableName = req.params.tableName;
-      const page = parseInt(req.query.page as string || "1");
-      const pageSize = parseInt(req.query.pageSize as string || "15");
-      const offset = (page - 1) * pageSize;
-
-      if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
-        return res.status(400).json({ error: "Invalid table name" });
-      }
-
-      const countRes = await db.all(`SELECT COUNT(*) as count FROM ${tableName}`);
-      const total = (countRes[0] as any).count;
-      const data = await db.all(`SELECT * FROM ${tableName} LIMIT ? OFFSET ?`, [pageSize, offset]);
-
-      res.json({
-        data,
-        total,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize)
-      });
-    } catch (error: any) {
-      console.error("Error fetching table data:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/admin/db/:tableName/purge", requireAdmin, async (req, res) => {
-    try {
-      const tableName = req.params.tableName;
-      if (!/^[a-zA-Z0-9_]+$/.test(tableName)) {
-        return res.status(400).json({ error: "Invalid table name" });
-      }
-
-      const protectedTables = ["users", "appSettings"];
-      if (protectedTables.includes(tableName)) {
-        return res.status(400).json({ error: "Cannot purge protected table" });
-      }
-
-      const result = await db.execute(`DELETE FROM ${tableName}`);
-      const deleted = (result as any).changes || 0;
-      res.json({ success: true, deleted });
-    } catch (error: any) {
-      console.error("Error purging table:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/admin/db/purge-all", requireAdmin, async (req, res) => {
-    try {
-      const tablesRes = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-      const tables = tablesRes.map((r: any) => r.name);
-
-      const protectedTables = ["users", "session", "rolePermissions", "userPermissions", "appSettings"];
-      let tablesCleared = 0;
-
-      for (const table of tables) {
-        if (!protectedTables.includes(table)) {
-          await db.execute(`DELETE FROM ${table}`);
-          tablesCleared++;
-        }
-      }
-      res.json({ success: true, tablesCleared });
-    } catch (error: any) {
-      console.error("Error purging all:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
 
 
@@ -18668,6 +18899,700 @@ Rispondi SOLO con il JSON valido, senza markdown o testo aggiuntivo.`;
       console.error("Error purging all tables:", error);
       res.status(500).json({ error: "Failed to purge all tables" });
     }
+  });
+
+  // =====================
+  // KEEP NOTES API
+  // =====================
+  app.get("/api/keep/notes/:userId", async (req, res) => {
+    try {
+      const notes = await storage.getKeepNotes(req.params.userId);
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/keep/notes/:userId/trash", async (req, res) => {
+    try {
+      const notes = await storage.getDeletedKeepNotes(req.params.userId);
+      res.json(notes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/keep/notes", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      // Handle checklistItems if sent as string
+      if (typeof data.checklistItems === 'string') {
+        try {
+          data.checklistItems = JSON.parse(data.checklistItems);
+        } catch (e) {
+          console.error("Error parsing checklistItems:", e);
+        }
+      }
+
+      // Ensure specific optional fields are explicitly undefined if missing to fallback to schema defaults or handling
+      // strict validation might require defaults.
+      // using strict parsing from schema
+
+      const note = await storage.createKeepNote(data);
+      res.json(note);
+    } catch (error: any) {
+      console.error("Error creating keep note:", error);
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/keep/notes/:id", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      if (typeof data.checklistItems === 'string') {
+        try {
+          data.checklistItems = JSON.parse(data.checklistItems);
+        } catch (e) {
+          console.error("Error parsing checklistItems update:", e);
+        }
+      }
+      const note = await storage.updateKeepNote(req.params.id, data);
+      res.json(note);
+    } catch (error: any) {
+      console.error("Error updating keep note:", error);
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/keep/notes/:id", async (req, res) => {
+    try {
+      await storage.deleteKeepNote(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/keep/notes/:id/trash", async (req, res) => {
+    try {
+      const note = await storage.softDeleteKeepNote(req.params.id);
+      res.json(note);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/keep/notes/:id/restore", async (req, res) => {
+    try {
+      const note = await storage.restoreKeepNote(req.params.id);
+      res.json(note);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/keep/notes/:id/duplicate", async (req, res) => {
+    try {
+      const note = await storage.duplicateKeepNote(req.params.id);
+      res.json(note);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/keep/notes/order", async (req, res) => {
+    try {
+      await storage.updateKeepNotesOrder(req.body);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/keep/labels/:userId", async (req, res) => {
+    try {
+      const labels = await storage.getKeepLabels(req.params.userId);
+      res.json(labels);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/keep/labels", async (req, res) => {
+    try {
+      const label = await storage.createKeepLabel(req.body);
+      res.json(label);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/keep/labels/:id", async (req, res) => {
+    try {
+      await storage.deleteKeepLabel(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Multer setup for uploads
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: (req, file, cb) => {
+        const uploadDir = "uploads";
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir);
+        }
+        cb(null, uploadDir);
+      },
+      filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + '-' + file.originalname);
+      }
+    })
+  });
+
+  // =====================
+  // WHITEBOARD API
+  // =====================
+
+  app.get("/api/whiteboards", async (req, res) => {
+    try {
+      const userId = req.query.userId as string;
+      const whiteboards = await storage.getWhiteboards(userId);
+      res.json(whiteboards);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whiteboards/:id", async (req, res) => {
+    try {
+      const whiteboard = await storage.getWhiteboard(req.params.id);
+      if (!whiteboard) return res.status(404).json({ error: "Whiteboard not found" });
+      res.json(whiteboard);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whiteboards", async (req, res) => {
+    try {
+      const data = insertWhiteboardSchema.parse(req.body);
+      const whiteboard = await storage.createWhiteboard(data);
+      res.json(whiteboard);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/whiteboards/:id", async (req, res) => {
+    try {
+      await storage.deleteWhiteboard(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whiteboards/:id/elements", async (req, res) => {
+    try {
+      const elements = await storage.getWhiteboardElements(req.params.id);
+      res.json(elements);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whiteboards/:id/elements", async (req, res) => {
+    try {
+      const data = insertWhiteboardElementSchema.parse({
+        ...req.body,
+        whiteboardId: req.params.id
+      });
+      const element = await storage.createWhiteboardElement(data);
+      res.json(element);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/whiteboard-elements/:id", async (req, res) => {
+    try {
+      const data = insertWhiteboardElementSchema.partial().parse(req.body);
+      const element = await storage.updateWhiteboardElement(req.params.id, data);
+      res.json(element);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/whiteboard-elements/:id", async (req, res) => {
+    try {
+      await storage.deleteWhiteboardElement(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Collaborators
+  app.get("/api/whiteboards/:id/collaborators", async (req, res) => {
+    try {
+      const board = await storage.getWhiteboard(req.params.id);
+      if (!board) return res.status(404).json({ error: "Whiteboard not found" });
+
+      const owner = board.ownerId ? await storage.getUser(board.ownerId) : null;
+
+      let collaboratorIds: string[] = [];
+      try {
+        collaboratorIds = typeof board.collaborators === 'string'
+          ? JSON.parse(board.collaborators)
+          : board.collaborators;
+      } catch (e) {
+        collaboratorIds = [];
+      }
+
+      const collaborators = [];
+      for (const id of collaboratorIds) {
+        const user = await storage.getUser(id);
+        if (user) collaborators.push(user);
+      }
+
+      res.json({ owner, collaborators });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whiteboards/:id/collaborators", async (req, res) => {
+    try {
+      const { collaboratorId } = req.body;
+      const board = await storage.getWhiteboard(req.params.id);
+      if (!board) return res.status(404).json({ error: "Whiteboard not found" });
+
+      let collaborators: string[] = [];
+      try {
+        collaborators = typeof board.collaborators === 'string'
+          ? JSON.parse(board.collaborators)
+          : (board.collaborators || []);
+      } catch (e) { collaborators = []; }
+
+      if (!collaborators.includes(collaboratorId)) {
+        collaborators.push(collaboratorId);
+        await storage.updateWhiteboard(req.params.id, { collaborators });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/whiteboards/:id/collaborators/:collaboratorId", async (req, res) => {
+    try {
+      const { collaboratorId } = req.params;
+      const board = await storage.getWhiteboard(req.params.id);
+      if (!board) return res.status(404).json({ error: "Whiteboard not found" });
+
+      let collaborators: string[] = [];
+      try {
+        collaborators = typeof board.collaborators === 'string'
+          ? JSON.parse(board.collaborators)
+          : (board.collaborators || []);
+      } catch (e) { collaborators = []; }
+
+      const newCollaborators = collaborators.filter(id => id !== collaboratorId);
+      await storage.updateWhiteboard(req.params.id, { collaborators: newCollaborators });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whiteboards/:id/upload", chatUpload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+      const whiteboardId = req.params.id;
+
+      const element = await storage.createWhiteboardElement({
+        whiteboardId,
+        type: 'image',
+        x: 100,
+        y: 100,
+        width: 300,
+        height: 200,
+        content: JSON.stringify({
+          url: `/uploads/${req.file.filename}`,
+          filename: req.file.originalname,
+          size: req.file.size
+        }),
+        zIndex: 10
+      });
+      res.json(element);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Office Document Upload (Check-in/Update)
+  app.post("/api/office/documents/:id/upload", documentUpload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Nessun file caricato" });
+      const docId = req.params.id;
+
+      const fileUrl = `/uploads/documents/${req.file.filename}`;
+
+      const updated = await storage.updateOfficeDocument(docId, {
+        fileUrl: fileUrl,
+        lastModified: new Date()
+      } as any);
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // FINANCE API
+  // =====================
+
+  app.get("/api/finance/accounts", async (req, res) => {
+    try {
+      const accounts = await storage.getFinanceAccounts();
+      res.json(accounts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/accounts/:id", async (req, res) => {
+    try {
+      const account = await storage.getFinanceAccount(req.params.id);
+      if (!account) return res.status(404).json({ error: "Account not found" });
+      res.json(account);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/accounts", async (req, res) => {
+    try {
+      const data = insertFinanceAccountSchema.parse(req.body);
+      const account = await storage.createFinanceAccount(data);
+      res.json(account);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/accounts/:id", async (req, res) => {
+    try {
+      const data = insertFinanceAccountSchema.partial().parse(req.body);
+      const account = await storage.updateFinanceAccount(req.params.id, data);
+      res.json(account);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/accounts/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteFinanceAccount(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/categories", async (req, res) => {
+    try {
+      const categories = await storage.getFinanceCategories();
+      res.json(categories);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/categories", async (req, res) => {
+    try {
+      const data = insertFinanceCategorySchema.parse(req.body);
+      const category = await storage.createFinanceCategory(data);
+      res.json(category);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/categories/:id", async (req, res) => {
+    try {
+      const data = insertFinanceCategorySchema.partial().parse(req.body);
+      const category = await storage.updateFinanceCategory(req.params.id, data);
+      res.json(category);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/categories/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteFinanceCategory(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/transactions", async (req, res) => {
+    try {
+      const transactions = await storage.getFinanceTransactions();
+      res.json(transactions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/transactions", async (req, res) => {
+    try {
+      const data = insertFinanceTransactionSchema.parse(req.body);
+      const transaction = await storage.createFinanceTransaction(data);
+      res.json(transaction);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/transactions/:id", async (req, res) => {
+    try {
+      const data = insertFinanceTransactionSchema.partial().parse(req.body);
+      const transaction = await storage.updateFinanceTransaction(req.params.id, data);
+      res.json(transaction);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/transactions/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteFinanceTransaction(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/stats", async (req, res) => {
+    try {
+      const stats = await storage.getFinanceStats();
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/invoices", async (req, res) => {
+    try {
+      const invoices = await storage.getInvoices();
+      res.json(invoices);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/invoices", async (req, res) => {
+    try {
+      const data = insertInvoiceSchema.parse(req.body);
+      const invoice = await storage.createInvoice(data);
+      res.json(invoice);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/invoices/:id", async (req, res) => {
+    try {
+      const data = insertInvoiceSchema.partial().parse(req.body);
+      const invoice = await storage.updateInvoice(req.params.id, data);
+      res.json(invoice);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/invoices/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteInvoice(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/quotes", async (req, res) => {
+    try {
+      const quotes = await storage.getQuotes();
+      res.json(quotes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/quotes", async (req, res) => {
+    try {
+      const data = insertQuoteSchema.parse(req.body);
+      const quote = await storage.createQuote(data);
+      res.json(quote);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/quotes/:id", async (req, res) => {
+    try {
+      const data = insertQuoteSchema.partial().parse(req.body);
+      const quote = await storage.updateQuote(req.params.id, data);
+      res.json(quote);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/quotes/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteQuote(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/finance/ddt", async (req, res) => {
+    try {
+      const ddtList = await storage.getDdtList();
+      res.json(ddtList);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/finance/ddt", async (req, res) => {
+    try {
+      const data = insertDdtSchema.parse(req.body);
+      const ddt = await storage.createDdt(data);
+      res.json(ddt);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/finance/ddt/:id", async (req, res) => {
+    try {
+      const data = insertDdtSchema.partial().parse(req.body);
+      const ddt = await storage.updateDdt(req.params.id, data);
+      res.json(ddt);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/finance/ddt/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteDdt(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // USER MANAGEMENT API
+  // =====================
+
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const userData = insertUserSchema.parse(req.body);
+
+      // Hash password if provided
+      if (userData.password) {
+        userData.password = await bcrypt.hash(userData.password, 10);
+      }
+
+      if (userData.username) {
+        const existing = await storage.getUserByUsername(userData.username);
+        if (existing) {
+          return res.status(400).json({ error: "Username already exists" });
+        }
+      }
+
+      const user = await storage.createUser(userData);
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/users/:id", async (req, res) => {
+    try {
+      const userData = { ...req.body };
+
+      // Hash password if provided and not empty
+      if (userData.password && userData.password.trim() !== "") {
+        userData.password = await bcrypt.hash(userData.password, 10);
+      } else {
+        delete userData.password; // Don't update if empty or not provided
+      }
+
+      const user = await storage.updateUser(req.params.id, userData);
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/users/:id/status", async (req, res) => {
+    try {
+      const { status } = req.body;
+      const user = await storage.updateUser(req.params.id, { status });
+      res.json(user);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    try {
+      const success = await storage.deleteUser(req.params.id);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/client-ip", (req, res) => {
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress;
+    res.json({ ip });
   });
 
   // =====================
@@ -19337,6 +20262,60 @@ Rispondi SOLO con il JSON valido, senza markdown o testo aggiuntivo.`;
     }
   });
 
+  app.post("/api/backups/:id/restore", requireAdmin, async (req, res) => {
+    try {
+      // 1. Get backup record
+      const backups = await storage.getBackups();
+      const backup = backups.find(b => b.id === req.params.id);
+
+      if (!backup || !backup.filePath) {
+        return res.status(404).json({ error: "Backup non trovato" });
+      }
+
+      // 2. Verify backup file exists
+      if (!fs.existsSync(backup.filePath)) {
+        return res.status(404).json({ error: "File di backup non trovato sul server" });
+      }
+
+      // 3. Get current DB path
+      const dbPath = process.env.DATABASE_URL?.replace(/^file:\/\//, '').replace(/^file:/, '');
+      if (!dbPath) {
+        return res.status(500).json({ error: "Database path not configured" });
+      }
+
+      // 4. Create safety backup of current state
+      const safetyBackupPath = dbPath + '.before-restore.' + Date.now();
+      await fs.promises.copyFile(dbPath, safetyBackupPath);
+
+      // 5. Flush WAL and close connections
+      try {
+        await db.execute(sql`PRAGMA wal_checkpoint(TRUNCATE)`);
+      } catch (e) {
+        console.warn('Failed to checkpoint WAL:', e);
+      }
+
+      // 6. Replace database file
+      await fs.promises.copyFile(backup.filePath, dbPath);
+
+      // 7. Return success (server should be restarted by systemd or PM2)
+      res.json({
+        success: true,
+        message: "Database ripristinato. Il server verrà riavviato automaticamente.",
+        safetyBackup: safetyBackupPath
+      });
+
+      // 8. Exit process to trigger restart
+      setTimeout(() => {
+        console.log('[RESTORE] Database restored, exiting for restart...');
+        process.exit(0);
+      }, 1000);
+
+    } catch (e: any) {
+      console.error('[RESTORE] Error:', e);
+      res.status(500).json({ error: e.message || "Errore durante il ripristino" });
+    }
+  });
+
 
 
   // =====================
@@ -19440,6 +20419,680 @@ Rispondi SOLO con il JSON valido, senza markdown o testo aggiuntivo.`;
     } catch (e: any) {
       console.error("Error fetching internal project details:", e);
       res.status(500).json({ error: e.message || "Errore interno del server" });
+    }
+  });
+
+  // =====================
+  // CUSTOMER PORTAL
+  // =====================
+
+  app.post("/api/anagrafica/clienti/:id/portal-token", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { expiresInDays = 30 } = req.body;
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+
+      // Create a unique token
+      const tokenString = `portal-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+      const token = await storage.createCustomerPortalToken({
+        clienteId: id,
+        token: tokenString,
+        expiresAt: expiresAt.toISOString(),
+        createdBy: (req.user as any)?.id ? parseInt((req.user as any).id) : null,
+        status: "active"
+      } as any); // Type assertion needed because of createdBy being number vs string/null mismatch potential or partial types
+
+      res.json(token);
+    } catch (error: any) {
+      console.error("Error creating portal token:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/portal/:token/check", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.params;
+      const portalToken = await storage.getCustomerPortalToken(token);
+
+      if (!portalToken || portalToken.status !== 'active') {
+        return res.status(404).json({ error: "Token non valido o scaduto" });
+      }
+
+      if (portalToken.expiresAt && new Date(portalToken.expiresAt) < new Date()) {
+        return res.status(410).json({ error: "Token scaduto" });
+      }
+
+      const cliente = await storage.getAnagraficaCliente(portalToken.clienteId);
+      if (!cliente) {
+        return res.status(404).json({ error: "Cliente non trovato" });
+      }
+
+      res.json({
+        requiresAuth: false,
+        clienteName: cliente.ragioneSociale
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/portal/:token", async (req: Request, res: Response) => {
+    try {
+      const { token } = req.params;
+      const portalToken = await storage.getCustomerPortalToken(token);
+
+      if (!portalToken || portalToken.status !== 'active') {
+        return res.status(404).json({ error: "Token non valido o scaduto" });
+      }
+
+      if (portalToken.expiresAt && new Date(portalToken.expiresAt) < new Date()) {
+        return res.status(410).json({ error: "Token scaduto" });
+      }
+
+      const cliente = await storage.getAnagraficaCliente(portalToken.clienteId);
+      if (!cliente) return res.status(404).json({ error: "Cliente non trovato" });
+
+      const fatture = await storage.getInvoicesByCliente(cliente.id);
+      const preventivi = await storage.getQuotesByCliente(cliente.id);
+
+      res.json({
+        cliente: {
+          id: cliente.id,
+          ragioneSociale: cliente.ragioneSociale,
+          email: cliente.email,
+          piva: cliente.piva,
+          indirizzo: cliente.indirizzo
+        },
+        documenti: {
+          fatture,
+          preventivi
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+
+  // =====================
+  // WHATSAPP ROUTES
+  // =====================
+
+  app.get("/api/whatsapp/status", (req, res) => {
+    const status = getWhatsAppStatus("user-1"); // Simplified user ID for now
+    res.json(status);
+  });
+
+  app.get("/api/whatsapp/qr", (req, res) => {
+    const qr = getQRCode("user-1");
+    res.json({ qr });
+  });
+
+  app.get("/api/whatsapp/contacts", async (req, res) => {
+    try {
+      const contacts = await storage.getWhatsappContacts();
+      res.json(contacts);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/whatsapp/contacts/:id/messages", async (req, res) => {
+    try {
+      const messages = await storage.getWhatsappMessages(req.params.id);
+      res.json(messages);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whatsapp/connect", async (req, res) => {
+    try {
+      await initializeWhatsApp("user-1");
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whatsapp/disconnect", async (req, res) => {
+    try {
+      await disconnectWhatsApp("user-1");
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/whatsapp/send", async (req, res) => {
+    try {
+      const { phoneNumber, message } = req.body;
+      await sendWhatsAppMessage("user-1", phoneNumber, message);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error sending whatsapp:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+
+  // =====================
+  // PULSE LIBRARY
+  // =====================
+
+  app.get("/api/books", async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const books = await storage.getBooks(userId);
+      res.json(books);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Errore recupero libri" });
+    }
+  });
+
+  app.get("/api/books/search", async (req, res) => {
+    const query = req.query.q as string;
+    if (!query) return res.json([]);
+
+    try {
+      const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&key=${process.env.GOOGLE_BOOKS_API_KEY || ''}`);
+      const data = await response.json();
+      res.json(data.items || []);
+    } catch (e: any) {
+      console.error("Google Books API error:", e);
+      res.status(500).json({ error: "Errore ricerca libri esterni" });
+    }
+  });
+
+  app.get("/api/books/:id", async (req, res) => {
+    try {
+      const book = await storage.getBook(req.params.id);
+      if (!book) return res.status(404).json({ error: "Libro non trovato" });
+      res.json(book);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/books", async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      const parsed = insertBookSchema.parse({ ...req.body, userId });
+      const book = await storage.createBook(parsed);
+      res.status(201).json(book);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || "Dati non validi" });
+    }
+  });
+
+  app.patch("/api/books/:id", async (req, res) => {
+    try {
+      const parsed = insertBookSchema.partial().parse(req.body);
+      const book = await storage.updateBook(req.params.id, parsed);
+      res.json(book);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/books/:id", async (req, res) => {
+    try {
+      await storage.deleteBook(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // File Upload Logic for Books
+  const bookStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      const dir = 'uploads/books/';
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = path.extname(file.originalname);
+      cb(null, 'book-' + req.params.id + '-' + uniqueSuffix + ext);
+    }
+  });
+
+  const uploadBook = multer({ storage: bookStorage });
+
+  app.post("/api/books/:id/upload", uploadBook.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "Nessun file caricato" });
+      }
+
+      const filePath = req.file.path; // e.g. uploads\books\book-123.pdf
+      const fileType = path.extname(req.file.originalname).substring(1); // pdf, epub
+
+      const book = await storage.updateBook(req.params.id, {
+        filePath: filePath,
+        fileType: fileType
+      });
+
+      res.json(book);
+    } catch (e: any) {
+      console.error("Upload error:", e);
+      res.status(500).json({ error: e.message || "Errore caricamento file" });
+    }
+  });
+
+  app.get("/api/books/:id/file", async (req, res) => {
+    try {
+      const book = await storage.getBook(req.params.id);
+      if (!book || !book.filePath) {
+        return res.status(404).json({ error: "File non trovato" });
+      }
+
+      let filePath = book.filePath;
+      // Strip leading slashes to ensure path.resolve treats it as relative to CWD, not drive root
+      while (filePath.startsWith('/') || filePath.startsWith('\\')) {
+        filePath = filePath.substring(1);
+      }
+      const absolutePath = path.resolve(filePath);
+
+      console.log(`[BookFile] Request for book ${req.params.id}`);
+      console.log(`[BookFile] DB Path: ${book.filePath}`);
+      console.log(`[BookFile] Resolved Path: ${absolutePath}`);
+      console.log(`[BookFile] Exists: ${fs.existsSync(absolutePath)}`);
+
+      if (fs.existsSync(absolutePath)) {
+        res.sendFile(absolutePath);
+      } else {
+        console.error(`[BookFile] File not found at ${absolutePath}`);
+        res.status(404).json({ error: "File fisico non trovato" });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Reading Sessions
+  app.get("/api/books/:id/sessions", async (req, res) => {
+    try {
+      const sessions = await storage.getReadingSessions(req.params.id);
+      res.json(sessions);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/books/:id/sessions", async (req, res) => {
+    try {
+      const userId = (req.user as any)?.id;
+      // Ensure we use the ID from parsing/body but override keys if needed
+      const parsed = insertReadingSessionSchema.parse({
+        ...req.body,
+        bookId: req.params.id,
+        userId
+      });
+      const session = await storage.logReadingSession(parsed);
+      res.status(201).json(session);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || "Dati sessione non validi" });
+    }
+  });
+
+  app.delete("/api/sessions/:id", async (req, res) => {
+    try {
+      await storage.deleteReadingSession(req.params.id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // =====================
+  // BOOKS IMPORT API
+  // =====================
+
+  app.post("/api/books/import", bookImportUpload.array("files", 20), async (req: Request, res: Response) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      const userId = (req as any).session?.userId as string;
+
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: "Nessun file caricato" });
+      }
+
+      const results = [];
+      const errors = [];
+
+      for (const file of files) {
+        try {
+          const book = await processUploadedBook(file.path, file.originalname, userId);
+          results.push(book);
+        } catch (error: any) {
+          console.error(`Error processing file ${file.originalname}:`, error);
+          errors.push({ file: file.originalname, error: error.message });
+        }
+      }
+
+      res.json({
+        success: true,
+        imported: results.length,
+        failed: errors.length,
+        results,
+        errors
+      });
+
+    } catch (error: any) {
+      console.error("Book import error:", error);
+      res.status(500).json({ error: "Errore durante l'importazione dei libri" });
+    }
+  });
+
+
+  // =====================
+  // CONTACTS API
+  // =====================
+
+  app.get("/api/contacts", async (req, res) => {
+
+    // GET /api/contacts (Active only)
+    const userId = (req.session as any)?.userId || req.query.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+
+    const userContacts = await db.select().from(contacts).where(
+      and(
+        eq(contacts.userId, userId),
+        isNull(contacts.deletedAt)
+      )
+    );
+    res.json(userContacts);
+  });
+
+  app.post("/api/contacts", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.body.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+
+    try {
+      const parsed = insertContactSchema.parse(req.body);
+      const contactData = {
+        ...parsed,
+        userId: userId,
+        id: `contact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+
+      const newContact = await db.insert(contacts).values(contactData).returning();
+      res.json(newContact[0]);
+    } catch (e: any) {
+      console.error("Insert Error:", e);
+      res.status(400).json({ error: "Invalid data", details: e.message });
+    }
+  });
+
+  app.put("/api/contacts/:id", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.body.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+    const { id } = req.params;
+    try {
+      const parsed = insertContactSchema.partial().parse(req.body);
+      const updated = await db.update(contacts)
+        .set({ ...parsed, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
+        .returning();
+      if (!updated.length) return res.status(404).send("Contact not found");
+      res.json(updated[0]);
+    } catch (e) {
+      res.status(400).json({ error: "Invalid data" });
+    }
+  });
+
+  // DELETE (Soft delete)
+  app.delete("/api/contacts/:id", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.query.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+    const { id } = req.params;
+
+    await db.update(contacts)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+    res.sendStatus(200);
+  });
+
+  // GET /api/contacts/trash (Deleted contacts + Auto Cleanup)
+  app.get("/api/contacts/trash", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.query.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+
+    // Auto Cleanup: Delete items older than 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    await db.delete(contacts).where(
+      and(
+        isNotNull(contacts.deletedAt),
+        lte(contacts.deletedAt, thirtyDaysAgo.toISOString())
+      )
+    );
+
+    const trashContacts = await db.select().from(contacts).where(
+      and(
+        eq(contacts.userId, userId),
+        isNotNull(contacts.deletedAt)
+      )
+    );
+    res.json(trashContacts);
+  });
+
+  // POST /api/contacts/restore/:id
+  app.post("/api/contacts/restore/:id", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.body.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+    const { id } = req.params;
+
+    await db.update(contacts)
+      .set({ deletedAt: null })
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+    res.sendStatus(200);
+  });
+
+  // DELETE /api/contacts/trash/:id (Permanent Delete)
+  app.delete("/api/contacts/trash/:id", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.query.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+    const { id } = req.params;
+
+    await db.delete(contacts)
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)));
+    res.sendStatus(200);
+  });
+
+  // POST /api/contacts/empty-trash (Manual Empty)
+  app.post("/api/contacts/empty-trash", async (req, res) => {
+    const userId = (req.session as any)?.userId || req.body.userId || req.headers["x-user-id"];
+    if (!userId) return res.sendStatus(401);
+
+    await db.delete(contacts).where(
+      and(
+        eq(contacts.userId, userId),
+        isNotNull(contacts.deletedAt)
+      )
+    );
+    res.sendStatus(200);
+  });
+
+  app.get("/api/contacts/auth/url", (req, res) => {
+    try {
+      // Debug
+      console.log("Hit /api/contacts/auth/url");
+
+      // TEMPORARY: Auth check disabled for debugging
+      // if (!(req.session as any)?.userId) return res.sendStatus(401);
+
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret) {
+        console.log("Missing Google Credentials");
+        return res.status(500).json({ error: "Server misconfigured: Missing Google Credentials (GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not in .env)" });
+      }
+
+      const host = req.get("host") || "localhost:5000";
+      // Check if secure: req.secure, or X-Forwarded-Proto, or localhost
+      // Cloudflare/Replit often send X-Forwarded-Proto.
+      // req.protocol might be 'http' even if https if trust proxy not set fully right.
+      // If not localhost, defaulting to https is safer for Google Redirect URIs.
+      const protocol = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
+      const redirectUri = `${protocol}://${host}/api/contacts/auth/callback`;
+
+      console.log("Redirect URI constructed:", redirectUri);
+
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+      const scopes = [
+        'https://www.googleapis.com/auth/contacts.readonly',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email'
+      ];
+
+      let url = oauth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: scopes,
+        state: ((req.session as any)?.userId || 'anonymous').toString(),
+        prompt: 'consent'
+      });
+
+      // Fallback if library fails
+      if (!url) {
+        console.error("googleapis library returned empty URL. Using manual fallback construction.");
+        const params = new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          response_type: 'code',
+          scope: scopes.join(' '),
+          access_type: 'offline',
+          state: ((req.session as any)?.userId || 'anonymous').toString(),
+          prompt: 'consent'
+        });
+        url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+      }
+
+      console.log("Generated Auth URL:", url);
+      res.json({ url });
+    } catch (error: any) {
+      console.error("CRITICAL ERROR in /api/contacts/auth/url:", error);
+      res.status(500).json({ error: "Errore interno generazione URL: " + error.message });
+    }
+  });
+
+  app.get("/api/contacts/auth/callback", async (req, res) => {
+    console.log("Hit /api/contacts/auth/callback", req.query);
+    const { code, error } = req.query;
+    if (error) return res.send("Google Auth Error: " + error);
+    if (!code) return res.send("No code provided");
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    const host = req.get("host") || "localhost:5000";
+    const protocol = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
+    const redirectUri = `${protocol}://${host}/api/contacts/auth/callback`;
+
+    try {
+      const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+      const { tokens } = await oauth2Client.getToken(code as string);
+
+      let userId = (req.user as any)?.id;
+      if (!userId) {
+        console.log("User session missing in callback. Redirecting to login.");
+        return res.redirect("/login");
+      }
+
+      await db.update(users)
+        .set({
+          googleAccessToken: tokens.access_token,
+          googleRefreshToken: tokens.refresh_token
+        })
+        .where(eq(users.id, userId));
+
+      res.redirect("/anagrafica?tab=contatti&google_connected=true");
+
+    } catch (e: any) {
+      console.error("Auth Token Error:", e);
+      res.status(500).send("Authentication failed: " + e.message);
+    }
+  });
+
+
+
+
+
+
+  app.post("/api/contacts/sync", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    const userId = (req.user as any).id;
+
+    try {
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+
+      if (!user?.googleAccessToken) {
+        return res.status(401).json({ error: "Non connesso a Google. Effettua nuovamente il login." });
+      }
+
+      const oauth2Client = new google.auth.OAuth2();
+      oauth2Client.setCredentials({
+        access_token: user.googleAccessToken,
+        refresh_token: user.googleRefreshToken
+      });
+
+      const people = google.people({ version: 'v1', auth: oauth2Client });
+
+      const response = await people.people.connections.list({
+        resourceName: 'people/me',
+        pageSize: 100,
+        personFields: 'names,emailAddresses,phoneNumbers,organizations,biographies,addresses',
+      });
+
+      const connections = response.data.connections || [];
+      let syncedCount = 0;
+
+      for (const person of connections) {
+        const googleId = person.resourceName?.split('/')[1]; // people/123 -> 123
+        if (!googleId) continue;
+
+        const name = person.names?.[0];
+        const email = person.emailAddresses?.[0];
+        const phone = person.phoneNumbers?.[0];
+        const org = person.organizations?.[0];
+
+        const contactData = {
+          googleId,
+          resourceName: person.resourceName,
+          etag: person.etag,
+          givenName: name?.givenName || "",
+          familyName: name?.familyName || "",
+          email: email?.value || "",
+          phone: phone?.value || "",
+          company: org?.name || "",
+          jobTitle: org?.title || "",
+          lastSyncedAt: new Date().toISOString()
+        };
+
+        // Upsert
+        await db.insert(contacts).values({ ...contactData, userId })
+          .onConflictDoUpdate({
+            target: contacts.googleId,
+            set: { ...contactData, updatedAt: sql`CURRENT_TIMESTAMP` }
+          });
+        syncedCount++;
+      }
+
+      res.json({ success: true, count: syncedCount });
+
+    } catch (error: any) {
+      console.error("Google Sync Error:", error);
+      res.status(500).json({ error: "Errore durante la sincronizzazione: " + error.message });
     }
   });
 

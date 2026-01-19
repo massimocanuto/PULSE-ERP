@@ -42,6 +42,7 @@ import Macchinari from "@/pages/Macchinari";
 import FinanzaPersonale from "@/pages/FinanzaPersonale";
 import CompanySearch from "@/pages/CompanySearch";
 import MobileTasks from "@/pages/MobileTasks";
+const Library = lazy(() => import("@/pages/Library"));
 
 // Caricamento pigro (Lazy Loading) per le pagine più pesanti (>100KB)
 const Documents = lazy(() => import("@/pages/Documents"));
@@ -112,6 +113,13 @@ function Router() {
       <Route path="/hr-manager" component={HRManager} />
       <Route path="/cedolini" component={Cedolini} />
       <Route path="/todolist" component={ToDoList} />
+      <Route path="/library">
+        <Suspense fallback={<LoadingFallback />}>
+          <ErrorBoundary>
+            <Library />
+          </ErrorBoundary>
+        </Suspense>
+      </Route>
       <Route path="/keep" component={PulseKeep} />
       <Route path="/office-pulse">
         <Suspense fallback={<LoadingFallback />}>
@@ -141,12 +149,8 @@ function Router() {
   );
 }
 
-import { WelcomeAnimation } from "@/components/WelcomeAnimation";
-import { AnimatePresence } from "framer-motion";
-
 function AuthenticatedApp() {
   const { user, isLoading } = useAuth();
-  const [showWelcome, setShowWelcome] = React.useState(false);
 
   // Check setup status
   const { data: setupStatus, isLoading: isSetupLoading } = useQuery({
@@ -156,14 +160,6 @@ function AuthenticatedApp() {
       return res.json();
     },
   });
-
-  // Handle welcome animation trigger
-  React.useEffect(() => {
-    if (user && !sessionStorage.getItem("pulse_welcome_shown")) {
-      setShowWelcome(true);
-      sessionStorage.setItem("pulse_welcome_shown", "true");
-    }
-  }, [user]);
 
   if (isLoading || isSetupLoading) {
     return (
@@ -177,19 +173,7 @@ function AuthenticatedApp() {
     return <Login />;
   }
 
-  return (
-    <>
-      <AnimatePresence>
-        {showWelcome && (
-          <WelcomeAnimation
-            username={user.name || user.username}
-            onComplete={() => setShowWelcome(false)}
-          />
-        )}
-      </AnimatePresence>
-      <Router />
-    </>
-  );
+  return <Router />;
 }
 
 function PublicRoutes() {

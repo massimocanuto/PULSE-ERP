@@ -23,6 +23,7 @@ import {
   archiveFolders, type ArchiveFolder, type InsertArchiveFolder,
   userPermissions, type UserPermission, type InsertUserPermission,
   personalTodos, type PersonalTodo, type InsertPersonalTodo,
+  userAlarmSettings, type UserAlarmSettings, type InsertUserAlarmSettings,
   subtasks, type Subtask, type InsertSubtask,
   taskComments, type TaskComment, type InsertTaskComment,
   activityFeed, type ActivityFeed, type InsertActivityFeed,
@@ -99,7 +100,10 @@ import {
   personalGoals, type PersonalGoal, type InsertPersonalGoal,
   personalGoalContributions, type PersonalGoalContribution, type InsertPersonalGoalContribution,
   officeDocuments, type OfficeDocument, type InsertOfficeDocument,
-  MODULES, ROLES
+  MODULES, ROLES,
+  customerPortalTokens, type CustomerPortalToken, type InsertCustomerPortalToken,
+  books, type Book, type InsertBook,
+  readingSessions, type ReadingSession, type InsertReadingSession
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, asc, and, or, inArray, isNull, isNotNull, sql, like, max, count } from "drizzle-orm";
@@ -140,7 +144,7 @@ export interface IStorage {
   deleteTask(id: string): Promise<boolean>;
 
   // Emails
-  getEmails(userId?: string, limit?: number): Promise<Email[]>;
+  getEmails(userId?: string, limit?: number, offset?: number, unreadOnly?: boolean): Promise<Email[]>;
   getUnreadEmailCount(userId: string): Promise<number>;
   getEmail(id: string): Promise<Email | undefined>;
   createEmail(email: InsertEmail): Promise<Email>;
@@ -180,7 +184,8 @@ export interface IStorage {
   // Email Cache (nuovo sistema)
   getEmailCache(userId: string, folder?: string): Promise<Email[]>;
   getEmailCacheById(id: string): Promise<Email | undefined>;
-  getEmailCacheByUid(userId: string, folder: string, uid: number): Promise<Email | undefined>;
+  getEmailCacheByUid(userId: string, folder: string, uid: number, accountId?: string): Promise<Email | undefined>;
+  getLastEmailUid(userId: string, folder: string): Promise<number>;
   createEmailCache(email: InsertEmail): Promise<Email>;
   updateEmailCache(id: string, email: Partial<InsertEmail>): Promise<Email | undefined>;
   deleteEmailCache(id: string): Promise<boolean>;
@@ -197,6 +202,52 @@ export interface IStorage {
   createEmailFolder(folder: InsertEmailFolder): Promise<EmailFolder>;
   updateEmailFolder(id: string, folder: Partial<InsertEmailFolder>): Promise<EmailFolder | undefined>;
   deleteEmailFolder(id: string): Promise<boolean>;
+
+  // =====================
+  // FINANZA PROFESSIONALE
+  // =====================
+
+  // Finance Accounts
+  getFinanceAccounts(): Promise<FinanceAccount[]>;
+  getFinanceAccount(id: string): Promise<FinanceAccount | undefined>;
+  createFinanceAccount(account: InsertFinanceAccount): Promise<FinanceAccount>;
+  updateFinanceAccount(id: string, account: Partial<InsertFinanceAccount>): Promise<FinanceAccount | undefined>;
+  deleteFinanceAccount(id: string): Promise<boolean>;
+
+  // Finance Categories
+  getFinanceCategories(): Promise<FinanceCategory[]>;
+  createFinanceCategory(category: InsertFinanceCategory): Promise<FinanceCategory>;
+  updateFinanceCategory(id: string, category: Partial<InsertFinanceCategory>): Promise<FinanceCategory | undefined>;
+  deleteFinanceCategory(id: string): Promise<boolean>;
+
+  // Finance Transactions
+  getFinanceTransactions(): Promise<FinanceTransaction[]>;
+  getFinanceTransaction(id: string): Promise<FinanceTransaction | undefined>;
+  createFinanceTransaction(transaction: InsertFinanceTransaction): Promise<FinanceTransaction>;
+  updateFinanceTransaction(id: string, transaction: Partial<InsertFinanceTransaction>): Promise<FinanceTransaction | undefined>;
+  deleteFinanceTransaction(id: string): Promise<boolean>;
+  getFinanceStats(): Promise<any>;
+
+  // Invoices
+  getInvoices(): Promise<Invoice[]>;
+  getInvoice(id: string): Promise<Invoice | undefined>;
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: string, invoice: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  deleteInvoice(id: string): Promise<boolean>;
+
+  // Quotes
+  getQuotes(): Promise<Quote[]>;
+  getQuote(id: string): Promise<Quote | undefined>;
+  createQuote(quote: InsertQuote): Promise<Quote>;
+  updateQuote(id: string, quote: Partial<InsertQuote>): Promise<Quote | undefined>;
+  deleteQuote(id: string): Promise<boolean>;
+
+  // DDT
+  getDdtList(): Promise<Ddt[]>;
+  getDdt(id: string): Promise<Ddt | undefined>;
+  createDdt(ddt: InsertDdt): Promise<Ddt>;
+  updateDdt(id: string, ddt: Partial<InsertDdt>): Promise<Ddt | undefined>;
+  deleteDdt(id: string): Promise<boolean>;
   initDefaultEmailFolders(userId: string): Promise<void>;
 
   // Email Sync State
@@ -470,7 +521,37 @@ export interface IStorage {
   updateBackupSchedule(id: string, schedule: Partial<InsertBackupSchedule>): Promise<BackupSchedule | undefined>;
   deleteBackupSchedule(id: string): Promise<boolean>;
 
+  // User Alarm Settings
+  getUserAlarmSettings(userId: string): Promise<UserAlarmSettings | undefined>;
+  upsertUserAlarmSettings(userId: string, settings: Partial<InsertUserAlarmSettings>): Promise<UserAlarmSettings>;
 
+
+  // Customer Portal
+  createCustomerPortalToken(token: InsertCustomerPortalToken): Promise<CustomerPortalToken>;
+  getCustomerPortalToken(token: string): Promise<CustomerPortalToken | undefined>;
+  getCustomerPortalTokensByCliente(clienteId: string): Promise<CustomerPortalToken[]>;
+  revokeCustomerPortalToken(id: string): Promise<boolean>;
+
+  revokeCustomerPortalToken(id: string): Promise<boolean>;
+
+  // Pulse Library - Books
+  getBooks(userId?: string): Promise<Book[]>;
+  getBook(id: string): Promise<Book | undefined>;
+  createBook(book: InsertBook): Promise<Book>;
+  updateBook(id: string, book: Partial<InsertBook>): Promise<Book | undefined>;
+  deleteBook(id: string): Promise<boolean>;
+
+  // Pulse Library - Reading Sessions
+  getReadingSessions(bookId: string): Promise<ReadingSession[]>;
+  logReadingSession(session: InsertReadingSession): Promise<ReadingSession>;
+  deleteReadingSession(id: string): Promise<boolean>;
+
+  // Office Pulse
+  getOfficeDocuments(userId?: string): Promise<OfficeDocument[]>;
+  getOfficeDocument(id: string): Promise<OfficeDocument | undefined>;
+  createOfficeDocument(doc: InsertOfficeDocument): Promise<OfficeDocument>;
+  updateOfficeDocument(id: string, doc: Partial<InsertOfficeDocument>): Promise<OfficeDocument | undefined>;
+  deleteOfficeDocument(id: string): Promise<boolean>;
 
 }
 
@@ -545,12 +626,20 @@ export class DatabaseStorage implements IStorage {
       // or if list is huge, use detailed SQL. Given SQLite and likely small load, memory filter is safer for JSON.
       // However, let's try a LIKE query for performance if possible, or simple array filter.
       // Let's use array filter for correctness with JSON.
+      const user = await this.getUser(userId);
       const allProjects = await db.select().from(projects).orderBy(desc(projects.createdAt));
       return allProjects.filter(p => {
-        if (p.owner === userId) return true;
+        // Check owner match (ID, Username, Name)
+        if (p.owner && (p.owner === userId || (user && (p.owner === user.username || p.owner === user.name)))) {
+          return true;
+        }
+
         try {
           const members = JSON.parse(p.teamMembers as unknown as string || "[]");
-          return Array.isArray(members) && members.includes(userId);
+          return Array.isArray(members) && (
+            members.includes(userId) ||
+            (user && (members.includes(user.username) || members.includes(user.name)))
+          );
         } catch (e) {
           return false;
         }
@@ -661,14 +750,20 @@ export class DatabaseStorage implements IStorage {
     return result[0]?.count || 0;
   }
 
-  async getEmails(userId?: string, limit?: number): Promise<Email[]> {
+  async getEmails(userId?: string, limit?: number, offset?: number, unreadOnly?: boolean): Promise<Email[]> {
     if (userId) {
-      const query = db.select().from(emails).where(eq(emails.userId, userId)).orderBy(desc(emails.receivedAt));
-      if (limit) return await query.limit(limit);
+      const conditions = [eq(emails.userId, userId)];
+      if (unreadOnly) {
+        conditions.push(eq(emails.unread, true));
+      }
+      let query = db.select().from(emails).where(and(...conditions)).orderBy(desc(emails.receivedAt));
+      if (limit) query = query.limit(limit) as any;
+      if (offset) query = query.offset(offset) as any;
       return await query;
     }
-    const query = db.select().from(emails).orderBy(desc(emails.receivedAt));
-    if (limit) return await query.limit(limit);
+    let query = db.select().from(emails).orderBy(desc(emails.receivedAt));
+    if (limit) query = query.limit(limit) as any;
+    if (offset) query = query.offset(offset) as any;
     return await query;
   }
 
@@ -814,18 +909,40 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async getEmailCacheByUid(userId: string, folder: string, uid: number): Promise<Email | undefined> {
-    const result = await db.select().from(emails)
-      .where(and(
-        eq(emails.userId, userId),
-        eq(emails.folder, folder),
-        eq(emails.uid, uid)
-      ));
+  async getEmailCacheByUid(userId: string, folder: string, uid: number, accountId?: string): Promise<Email | undefined> {
+    const conditions = [
+      eq(emails.userId, userId),
+      eq(emails.folder, folder),
+      eq(emails.uid, uid)
+    ];
+
+    if (accountId) {
+      conditions.push(eq(emails.accountId, accountId));
+    } else {
+      conditions.push(sql`${emails.accountId} IS NULL`);
+    }
+
+    const result = await db.select().from(emails).where(and(...conditions));
     return result[0];
   }
 
+  async getLastEmailUid(userId: string, folder: string): Promise<number> {
+    const result = await db.select({ uid: emails.uid })
+      .from(emails)
+      .where(and(eq(emails.userId, userId), eq(emails.folder, folder)))
+      .orderBy(desc(emails.uid))
+      .limit(1);
+
+    return result.length > 0 ? result[0].uid : 0;
+  }
+
   async createEmailCache(email: InsertEmail): Promise<Email> {
-    const [created] = await db.insert(emails).values(email).returning();
+    const emailData = {
+      ...email,
+      id: randomUUID(),
+      receivedAt: email.receivedAt || new Date().toISOString()
+    };
+    const [created] = await db.insert(emails).values(emailData).returning();
     return created;
   }
 
@@ -1050,6 +1167,50 @@ export class DatabaseStorage implements IStorage {
   async getWhatsappContact(id: string): Promise<WhatsappContact | undefined> {
     const result = await db.select().from(whatsappContacts).where(eq(whatsappContacts.id, id));
     return result[0];
+  }
+
+  async createWhatsappContact(contact: InsertWhatsappContact): Promise<WhatsappContact> {
+    const id = randomUUID();
+    const [newContact] = await db.insert(whatsappContacts).values({
+      ...contact,
+      id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }).returning();
+    return newContact;
+  }
+
+  async updateWhatsappContact(id: string, contact: Partial<InsertWhatsappContact>): Promise<WhatsappContact | undefined> {
+    const [updated] = await db.update(whatsappContacts)
+      .set({ ...contact, updatedAt: new Date().toISOString() })
+      .where(eq(whatsappContacts.id, id))
+      .returning();
+    return updated;
+  }
+
+  // WhatsApp Messages
+  async getWhatsappMessages(contactId: string): Promise<WhatsappMessage[]> {
+    return await db.select().from(whatsappMessages)
+      .where(eq(whatsappMessages.contactId, contactId))
+      .orderBy(asc(whatsappMessages.createdAt));
+  }
+
+  async createWhatsappMessage(message: InsertWhatsappMessage): Promise<WhatsappMessage> {
+    const id = randomUUID();
+    const [newMessage] = await db.insert(whatsappMessages).values({
+      ...message,
+      id,
+      createdAt: new Date().toISOString()
+    }).returning();
+
+    // Update contact's last message info
+    await db.update(whatsappContacts).set({
+      lastMessageAt: new Date().toISOString(),
+      lastMessagePreview: message.content ? message.content.substring(0, 50) : 'Media',
+      unreadCount: message.type === 'received' ? sql`${whatsappContacts.unreadCount} + 1` : whatsappContacts.unreadCount
+    }).where(eq(whatsappContacts.id, message.contactId));
+
+    return newMessage;
   }
 
   // Telegram Chats
@@ -1691,7 +1852,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updatePersonalTodo(id: string, todoData: Partial<InsertPersonalTodo>): Promise<PersonalTodo | undefined> {
-    const result = await db.update(personalTodos).set(todoData).where(eq(personalTodos.id, id)).returning();
+    const result = await db.update(personalTodos)
+      .set({ ...todoData, updatedAt: new Date().toISOString() })
+      .where(eq(personalTodos.id, id))
+      .returning();
     return result[0];
   }
 
@@ -2277,12 +2441,6 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
-  async getLastEmailUid(userId: string, folder: string): Promise<number> {
-    const result = await db.select({ maxUid: max(emails.uid) })
-      .from(emails)
-      .where(and(eq(emails.userId, userId), eq(emails.folder, folder)));
-    return result[0]?.maxUid || 0;
-  }
 
   async cacheEmails(newEmails: InsertEmail[]): Promise<void> {
     if (newEmails.length === 0) return;
@@ -3694,19 +3852,192 @@ export class DatabaseStorage implements IStorage {
   }
 
 
+
+
   // Finance - Invoices
 
 
 
+  // User Alarm Settings
+  async getUserAlarmSettings(userId: string): Promise<UserAlarmSettings | undefined> {
+    const result = await db.select().from(userAlarmSettings).where(eq(userAlarmSettings.userId, userId));
+    return result[0];
+  }
+
+  async upsertUserAlarmSettings(userId: string, settings: Partial<InsertUserAlarmSettings>): Promise<UserAlarmSettings> {
+    const existing = await this.getUserAlarmSettings(userId);
+
+    if (existing) {
+      // Update existing
+      const [updated] = await db
+        .update(userAlarmSettings)
+        .set({ ...settings, updatedAt: new Date().toISOString() })
+        .where(eq(userAlarmSettings.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      // Create new
+      const newSettings = {
+        ...settings,
+        userId,
+        id: randomUUID(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const [created] = await db.insert(userAlarmSettings).values(newSettings).returning();
+      return created;
+    }
+  }
+
+  // =====================
+  // CUSTOMER PORTAL
+  // =====================
+
+  async createCustomerPortalToken(token: InsertCustomerPortalToken): Promise<CustomerPortalToken> {
+    const newToken = {
+      ...token,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      accessCount: 0,
+      status: "active"
+    };
+    const result = await db.insert(customerPortalTokens).values(newToken).returning();
+    return result[0];
+  }
+
+  async getCustomerPortalToken(token: string): Promise<CustomerPortalToken | undefined> {
+    const result = await db.select().from(customerPortalTokens).where(eq(customerPortalTokens.token, token));
+    return result[0];
+  }
+
+  async getCustomerPortalTokensByCliente(clienteId: string): Promise<CustomerPortalToken[]> {
+    return await db.select().from(customerPortalTokens).where(eq(customerPortalTokens.clienteId, clienteId));
+  }
+
+  async revokeCustomerPortalToken(id: string): Promise<boolean> {
+    const result = await db.update(customerPortalTokens)
+      .set({ status: "revoked" })
+      .where(eq(customerPortalTokens.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // =====================
+  // PULSE LIBRARY
+  // =====================
+
+  async getBooks(userId?: string): Promise<Book[]> {
+    if (userId) {
+      return await db.select().from(books).where(eq(books.userId, userId)).orderBy(desc(books.updatedAt));
+    }
+    return await db.select().from(books).orderBy(desc(books.updatedAt));
+  }
+
+  async getBook(id: string): Promise<Book | undefined> {
+    const result = await db.select().from(books).where(eq(books.id, id));
+    return result[0];
+  }
+
+  async createBook(insertBook: InsertBook): Promise<Book> {
+    const book = {
+      ...insertBook,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const result = await db.insert(books).values(book).returning();
+    return result[0];
+  }
+
+  async updateBook(id: string, updateBook: Partial<InsertBook>): Promise<Book | undefined> {
+    const result = await db.update(books)
+      .set({ ...updateBook, updatedAt: new Date().toISOString() })
+      .where(eq(books.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteBook(id: string): Promise<boolean> {
+    const result = await db.delete(books).where(eq(books.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getReadingSessions(bookId: string): Promise<ReadingSession[]> {
+    return await db.select().from(readingSessions)
+      .where(eq(readingSessions.bookId, bookId))
+      .orderBy(desc(readingSessions.date));
+  }
+
+  async logReadingSession(insertSession: InsertReadingSession): Promise<ReadingSession> {
+    const session = {
+      ...insertSession,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    };
+    const result = await db.insert(readingSessions).values(session).returning();
+
+    // Also update book current page and status
+    const book = await this.getBook(session.bookId);
+    if (book) {
+      await this.updateBook(session.bookId, {
+        currentPage: session.pagesRead, // Assuming cumulative, or adjust logic if delta
+        status: (book.totalPages && session.pagesRead >= book.totalPages) ? "completed" : "reading",
+        finishedAt: (book.totalPages && session.pagesRead >= book.totalPages) ? new Date().toISOString() : undefined
+      });
+    }
+
+    return result[0];
+  }
+
+  async deleteReadingSession(id: string): Promise<boolean> {
+    const result = await db.delete(readingSessions).where(eq(readingSessions.id, id)).returning();
+    return result.length > 0;
+  }
 
 
+  // =====================
+  // OFFICE PULSE
+  // =====================
 
+  async getOfficeDocuments(userId?: string): Promise<OfficeDocument[]> {
+    if (userId) {
+      return await db.select().from(officeDocuments).where(eq(officeDocuments.ownerId, userId)).orderBy(desc(officeDocuments.updatedAt));
+    }
+    return await db.select().from(officeDocuments).orderBy(desc(officeDocuments.updatedAt));
+  }
 
+  async getOfficeDocument(id: string): Promise<OfficeDocument | undefined> {
+    const result = await db.select().from(officeDocuments).where(eq(officeDocuments.id, id));
+    return result[0];
+  }
 
+  async createOfficeDocument(doc: InsertOfficeDocument): Promise<OfficeDocument> {
+    const newDoc = {
+      ...doc,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      version: 1,
+      isLocked: false
+    };
+    const result = await db.insert(officeDocuments).values(newDoc).returning();
+    return result[0];
+  }
 
+  async updateOfficeDocument(id: string, doc: Partial<InsertOfficeDocument>): Promise<OfficeDocument | undefined> {
+    const result = await db.update(officeDocuments)
+      .set({ ...doc, updatedAt: new Date().toISOString() })
+      .where(eq(officeDocuments.id, id))
+      .returning();
+    return result[0];
+  }
 
-
+  async deleteOfficeDocument(id: string): Promise<boolean> {
+    const result = await db.delete(officeDocuments).where(eq(officeDocuments.id, id)).returning();
+    return result.length > 0;
+  }
 
 } // End of DatabaseStorage definition
+
 
 export const storage = new DatabaseStorage();

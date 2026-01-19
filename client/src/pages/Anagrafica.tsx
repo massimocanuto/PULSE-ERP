@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
+import { ContactsTab } from "@/components/ContactsTab";
 
 const STATI = [
   { value: "attivo", label: "Attivo", color: "bg-green-500" },
@@ -2684,10 +2685,10 @@ function ClientiTab() {
 
   const generatePortalMutation = useMutation({
     mutationFn: async (clienteId: string) => {
-      const res = await fetch("/api/customer-portal/generate", {
+      const res = await fetch(`/api/anagrafica/clienti/${clienteId}/portal-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clienteId, nome: "Portale Documenti" }),
+        body: JSON.stringify({ expiresInDays: 30 }),
       });
       if (!res.ok) throw new Error("Errore nella generazione del link");
       return res.json();
@@ -5108,7 +5109,7 @@ export default function Anagrafica() {
         <div className="h-32 w-full flex-shrink-0 bg-gradient-to-r from-[#4a5568] via-[#5a6a7d] to-[#6b7a8f]" />
 
         <div className="flex-1 overflow-auto -mt-16 px-6">
-          <Tabs defaultValue="azienda" className="h-full flex flex-col">
+          <Tabs defaultValue={new URLSearchParams(window.location.search).get("tab") || "azienda"} className="h-full flex flex-col">
             <div className="bg-stone-50 dark:bg-stone-900/50 rounded-xl shadow-lg border mb-6">
               <div className="p-4 pb-2">
                 <div className="flex items-center gap-3 mb-3">
@@ -5134,10 +5135,14 @@ export default function Anagrafica() {
                   </div>
                 </div>
 
-                <TabsList className="grid w-full max-w-2xl grid-cols-4 gap-1 h-auto bg-transparent p-0">
+                <TabsList className="grid w-full max-w-2xl grid-cols-5 gap-1 h-auto bg-transparent p-0">
                   <TabsTrigger value="azienda" className="flex flex-col items-center justify-center gap-0.5 px-1 py-2 text-[9px] data-[state=active]:bg-primary/20 rounded-lg">
                     <Briefcase className="h-4 w-4" />
                     <span>Azienda</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="contatti" className="flex flex-col items-center justify-center gap-0.5 px-1 py-2 text-[9px] data-[state=active]:bg-primary/20 rounded-lg">
+                    <Phone className="h-4 w-4" />
+                    <span>Contatti</span>
                   </TabsTrigger>
                   <TabsTrigger value="clienti" className="flex flex-col items-center justify-center gap-0.5 px-1 py-2 text-[9px] data-[state=active]:bg-primary/20 rounded-lg">
                     <Building2 className="h-4 w-4" />
@@ -5159,6 +5164,9 @@ export default function Anagrafica() {
               <TabsContent value="azienda" className="m-0 h-full">
                 <AziendaTab />
               </TabsContent>
+              <TabsContent value="contatti" className="m-0 h-full">
+                <ContactsTab />
+              </TabsContent>
               <TabsContent value="clienti" className="m-0 h-full">
                 <ClientiTab />
               </TabsContent>
@@ -5168,6 +5176,7 @@ export default function Anagrafica() {
               <TabsContent value="condivisioni" className="m-0 h-full">
                 <CondivisioniTab />
               </TabsContent>
+
             </div>
           </Tabs>
         </div>

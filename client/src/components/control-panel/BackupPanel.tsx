@@ -47,6 +47,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
 import { it } from "date-fns/locale";
+import { useToast } from "@/hooks/use-toast";
 
 interface Backup {
   id: string;
@@ -78,6 +79,7 @@ interface BackupSchedule {
 export default function BackupPanel() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [newSchedule, setNewSchedule] = useState({
     name: "Backup Automatico",
@@ -217,6 +219,30 @@ export default function BackupPanel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/backup-schedules"] });
+    },
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/backups/${id}/restore`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Failed to restore backup");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Ripristino completato",
+        description: data.message || "Il server si riavvierà automaticamente"
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Errore",
+        description: error.message,
+        variant: "destructive"
+      });
     },
   });
 
@@ -401,14 +427,29 @@ export default function BackupPanel() {
                     <TableCell>{formatDateTime(backup.createdAt)}</TableCell>
                     <TableCell>{formatDateTime(backup.completedAt)}</TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteBackupMutation.mutate(backup.id)}
-                        disabled={deleteBackupMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (confirm(`⚠️ ATTENZIONE: Ripristinare il backup "${backup.name}"?\n\nQuesta operazione:\n- Sovrascriverà tutti i dati attuali\n- Riavvierà il server\n- NON può essere annullata\n\nConfermi?`)) {
+                              restoreMutation.mutate(backup.id);
+                            }
+                          }}
+                          disabled={restoreMutation.isPending || backup.status !== "completed"}
+                          title="Ripristina database da questo backup"
+                        >
+                          <Download className="h-4 w-4 text-blue-500" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteBackupMutation.mutate(backup.id)}
+                          disabled={deleteBackupMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

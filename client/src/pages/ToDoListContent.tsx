@@ -172,6 +172,7 @@ interface PersonalTodo {
   pomodoroMinutes?: number;
   orderIndex?: number;
   createdAt: string;
+  googleCalendarEventId?: string;
 }
 
 interface Project {
@@ -2342,7 +2343,7 @@ export function ToDoListContent() {
                   <Label>Scadenza</Label>
                   <Input
                     type="datetime-local"
-                    value={editingTodo.dueDate || ""}
+                    value={editingTodo.dueDate ? format(new Date(editingTodo.dueDate), "yyyy-MM-dd'T'HH:mm") : ""}
                     onChange={(e) => setEditingTodo({ ...editingTodo, dueDate: e.target.value })}
                   />
                 </div>
@@ -2411,7 +2412,7 @@ export function ToDoListContent() {
                     <Label>Fine ricorrenza</Label>
                     <Input
                       type="date"
-                      value={editingTodo.recurrenceEndDate || ""}
+                      value={editingTodo.recurrenceEndDate ? format(new Date(editingTodo.recurrenceEndDate), "yyyy-MM-dd") : ""}
                       onChange={(e) => setEditingTodo({ ...editingTodo, recurrenceEndDate: e.target.value })}
                     />
                   </div>
